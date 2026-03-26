@@ -11,6 +11,7 @@ struct SubReaderApp: App {
 
     @StateObject private var appState: AppState
     @StateObject private var container: DIContainer
+    @ObservedObject private var languageManager = LanguageManager.shared
 
     init() {
         let di = DIContainer()
@@ -38,6 +39,7 @@ struct SubReaderApp: App {
             ContentView()
                 .environmentObject(appState)
                 .environmentObject(container)
+                .environmentObject(languageManager)
         }
         .commands {
             AppCommands(appState: appState)
@@ -47,6 +49,7 @@ struct SubReaderApp: App {
         Settings {
             SettingsView()
                 .environmentObject(appState)
+                .environmentObject(languageManager)
         }
         #endif
     }
