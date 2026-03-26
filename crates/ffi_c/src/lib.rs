@@ -9,6 +9,7 @@ use std::slice;
 use std::sync::Mutex;
 
 use core_parser::EpubParser;
+use core_parser::TxtParser;
 use core_state::StateManager;
 use shared_types::{Annotation, Bookmark};
 
@@ -431,6 +432,61 @@ pub unsafe extern "C" fn reader_get_cover_image(
             }
             Err(_) => FFI_ERR_NOT_FOUND,
         }
+    })
+    .unwrap_or(FFI_ERR_PANIC)
+}
+
+// ─── TXT Operations ──────────────────────────────────────────────────────────
+
+/// Parse a TXT file from raw bytes with chapter splitting.
+/// Returns JSON with { "encoding": "...", "had_replacements": bool, "chapters": [...] }.
+/// Each chapter has { "title": "...", "nodes": [...] }.
+///
+/// This is a stateless operation — no need to call reader_open_book first.
+///
+/// # Safety
+/// `data_ptr` must point to valid bytes of length `data_len`.
+/// `out_ptr` and `out_len` must be valid pointers.
+#[no_mangle]
+pub unsafe extern "C" fn reader_parse_txt(
+    data_ptr: *const u8,
+    data_len: u32,
+    out_ptr: *mut *const u8,
+    out_len: *mut u32,
+) -> i32 {
+    catch_unwind(|| {
+        if data_ptr.is_null() || out_ptr.is_null() || out_len.is_null() {
+            return FFI_ERR_NULL_PTR;
+        }
+
+        let data = unsafe { slice::from_raw_parts(data_ptr, data_len as usize) };
+
+        let result = match TxtParser::parse_with_chapters(data) {
+            Ok(r) => r,
+            Err(_) => return FFI_ERR_PARSE_FAILED,
+        };
+
+        let json = match serde_json::to_string(&result) {
+            Ok(j) => j,
+            Err(_) => return FFI_ERR_UNKNOWN,
+        };
+
+        let mut guard = match ENGINE.lock() {
+            Ok(g) => g,
+            Err(_) => return FFI_ERR_UNKNOWN,
+        };
+
+        let engine = match guard.as_mut() {
+            Some(e) => e,
+            None => return FFI_ERR_NOT_INIT,
+        };
+
+        let (ptr, len) = set_return_buffer(engine, json);
+        unsafe {
+            *out_ptr = ptr;
+            *out_len = len;
+        }
+        FFI_OK
     })
     .unwrap_or(FFI_ERR_PANIC)
 }
