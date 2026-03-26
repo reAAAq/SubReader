@@ -5,6 +5,7 @@ import PackageDescription
 
 let package = Package(
     name: "SubReader",
+    defaultLocalization: "en",
     platforms: [
         .macOS(.v14)
     ],
@@ -46,6 +47,9 @@ let package = Package(
             dependencies: ["ReaderBridge", "ReaderModels"],
             path: "SubReader/Sources",
             exclude: ["Models", "Bridge"],
+            resources: [
+                .process("Resources")
+            ],
             swiftSettings: [
                 .enableExperimentalFeature("StrictConcurrency")
             ]
