@@ -24,9 +24,17 @@
 *.so
 *.dylib
 *.dll
-*.a
 *.wasm
 pkg/
+
+# Apple app
+apple_app/.build/
+apple_app/DerivedData/
+apple_app/SubReader/Vendor/*.a
+apple_app/SubReader/Vendor/*.h
+**/.swiftpm/xcode/xcuserdata/
+**/.swiftpm/xcode/package.xcworkspace/xcuserdata/
+*.xcuserstate
 
 .codebuddy/
 .md
