@@ -10,6 +10,17 @@ enum ReadingThemeType: String, CaseIterable, Identifiable {
     case custom = "Custom"
 
     var id: String { rawValue }
+
+    /// Localized display name for the theme.
+    @MainActor
+    var displayName: String {
+        switch self {
+        case .light: return L("theme.light")
+        case .dark: return L("theme.dark")
+        case .sepia: return L("theme.sepia")
+        case .custom: return L("theme.custom")
+        }
+    }
 }
 
 /// Theme configuration for the reading view.
