@@ -26,6 +26,7 @@
 *.dll
 *.wasm
 pkg/
+ARCHITECTURE.md
 
 # Apple app
 apple_app/.build/
