@@ -329,7 +329,45 @@ public struct Annotation: Codable, Sendable, Hashable, Identifiable {
 
 // MARK: - Shared JSON Decoder
 
-/// Shared, pre-configured JSONDecoder for high-performance decoding.
+// MARK: - TXT Parse Result
+
+/// Result of parsing a TXT file through the Rust engine.
+public struct TxtParseResult: Codable, Sendable {
+    /// Detected encoding name (e.g., "UTF-8", "GBK").
+    public let encoding: String
+    /// Whether replacement characters were used during decoding.
+    public let hadReplacements: Bool
+    /// Chapters extracted from the text.
+    public let chapters: [TxtChapter]
+
+    public init(encoding: String, hadReplacements: Bool, chapters: [TxtChapter]) {
+        self.encoding = encoding
+        self.hadReplacements = hadReplacements
+        self.chapters = chapters
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case encoding
+        case hadReplacements = "had_replacements"
+        case chapters
+    }
+}
+
+/// A single chapter from a parsed TXT file.
+public struct TxtChapter: Codable, Sendable, Identifiable {
+    public var id: String { title }
+    /// Chapter title.
+    public let title: String
+    /// Chapter content as DOM nodes.
+    public let nodes: [DomNode]
+
+    public init(title: String, nodes: [DomNode]) {
+        self.title = title
+        self.nodes = nodes
+    }
+}
+
+// MARK: - Shared JSON Decoder
 /// Reuse this instance to avoid repeated allocator overhead.
 public enum JSONCoding {
     /// Shared decoder configured for Rust serde JSON output.
