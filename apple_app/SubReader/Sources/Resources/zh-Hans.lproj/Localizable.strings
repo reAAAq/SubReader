@@ -1,0 +1,83 @@
+/* Localizable.strings (Simplified Chinese) — SubReader */
+
+// MARK: - Sidebar
+"sidebar.library" = "书库";
+"sidebar.allBooks" = "所有书籍";
+"sidebar.reading" = "阅读";
+"sidebar.toc" = "目录";
+"sidebar.bookmarks" = "书签";
+"sidebar.annotations" = "批注";
+
+// MARK: - Library
+"library.title" = "书库";
+"library.openFile" = "打开文件...";
+"library.open" = "打开";
+"library.delete" = "删除";
+"library.noBooks" = "暂无书籍";
+"library.dragHint" = "拖放 EPUB 或 TXT 文件到此处开始阅读";
+"library.importing" = "正在导入...";
+"library.view" = "视图";
+
+// MARK: - Reader
+"reader.reading" = "阅读中";
+"reader.loadingChapter" = "正在加载章节...";
+"reader.loading" = "正在加载...";
+"reader.chapter" = "第 %d 章";
+"reader.bookNotFound" = "在书库中未找到该书籍";
+"reader.failedOpenEpub" = "无法打开 EPUB 文件";
+"reader.failedLoadMetadata" = "无法加载书籍元数据";
+"reader.noChapters" = "该书籍中未找到章节";
+"reader.failedLoadChapter" = "无法加载章节内容";
+"reader.failedLoadChapterShort" = "无法加载章节";
+"reader.failedLoadTxt" = "无法加载文本文件，文件可能已被移动或删除。";
+
+// MARK: - Bookmarks
+"bookmarks.title" = "书签";
+"bookmarks.noBookmarks" = "暂无书签";
+"bookmarks.hint" = "按 ⌘B 为当前页面添加书签";
+"bookmarks.untitled" = "未命名书签";
+"bookmarks.delete" = "删除";
+
+// MARK: - Annotations
+"annotations.title" = "批注";
+"annotations.noAnnotations" = "暂无批注";
+"annotations.hint" = "选中文字以添加高亮和笔记";
+"annotations.highlight" = "高亮";
+"annotations.delete" = "删除";
+
+// MARK: - Settings
+"settings.reading" = "阅读";
+"settings.appearance" = "外观";
+"settings.font" = "字体";
+"settings.fontFamily" = "字体族";
+"settings.systemDefault" = "系统默认";
+"settings.fontSize" = "字号";
+"settings.lineSpacing" = "行距";
+"settings.preview" = "预览";
+"settings.previewText" = "天地玄黄，宇宙洪荒。日月盈昃，辰宿列张。";
+"settings.theme" = "主题";
+"settings.readingTheme" = "阅读主题";
+"settings.followSystemAppearance" = "跟随系统外观";
+"settings.themePreview" = "主题预览";
+"settings.language" = "语言";
+"settings.languageLabel" = "界面语言";
+
+// MARK: - Language Options
+"language.system" = "跟随系统";
+"language.zhHans" = "简体中文";
+"language.en" = "English";
+
+// MARK: - Theme Names
+"theme.light" = "浅色";
+"theme.dark" = "深色";
+"theme.sepia" = "护眼";
+"theme.custom" = "自定义";
+
+// MARK: - Commands
+"commands.openFile" = "打开文件...";
+"commands.toggleSidebar" = "切换侧边栏";
+"commands.bookmarkCurrentPage" = "为当前页面添加书签";
+
+// MARK: - Errors
+"error.title" = "错误";
+"error.ok" = "好";

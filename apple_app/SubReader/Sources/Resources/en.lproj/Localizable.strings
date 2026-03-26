@@ -1,0 +1,83 @@
+/* Localizable.strings (English) — SubReader */
+
+// MARK: - Sidebar
+"sidebar.library" = "Library";
+"sidebar.allBooks" = "All Books";
+"sidebar.reading" = "Reading";
+"sidebar.toc" = "Table of Contents";
+"sidebar.bookmarks" = "Bookmarks";
+"sidebar.annotations" = "Annotations";
+
+// MARK: - Library
+"library.title" = "Library";
+"library.openFile" = "Open File...";
+"library.open" = "Open";
+"library.delete" = "Delete";
+"library.noBooks" = "No Books Yet";
+"library.dragHint" = "Drag & drop EPUB or TXT files here to start reading";
+"library.importing" = "Importing...";
+"library.view" = "View";
+
+// MARK: - Reader
+"reader.reading" = "Reading";
+"reader.loadingChapter" = "Loading chapter...";
+"reader.loading" = "Loading...";
+"reader.chapter" = "Chapter %d";
+"reader.bookNotFound" = "Book not found in library";
+"reader.failedOpenEpub" = "Failed to open EPUB file";
+"reader.failedLoadMetadata" = "Failed to load book metadata";
+"reader.noChapters" = "No chapters found in this book";
+"reader.failedLoadChapter" = "Failed to load chapter content";
+"reader.failedLoadChapterShort" = "Failed to load chapter";
+"reader.failedLoadTxt" = "Failed to load text file. The file may have been moved or deleted.";
+
+// MARK: - Bookmarks
+"bookmarks.title" = "Bookmarks";
+"bookmarks.noBookmarks" = "No Bookmarks";
+"bookmarks.hint" = "Press ⌘B to bookmark the current page";
+"bookmarks.untitled" = "Untitled Bookmark";
+"bookmarks.delete" = "Delete";
+
+// MARK: - Annotations
+"annotations.title" = "Annotations";
+"annotations.noAnnotations" = "No Annotations";
+"annotations.hint" = "Select text to add highlights and notes";
+"annotations.highlight" = "Highlight";
+"annotations.delete" = "Delete";
+
+// MARK: - Settings
+"settings.reading" = "Reading";
+"settings.appearance" = "Appearance";
+"settings.font" = "Font";
+"settings.fontFamily" = "Font Family";
+"settings.systemDefault" = "System Default";
+"settings.fontSize" = "Font Size";
+"settings.lineSpacing" = "Line Spacing";
+"settings.preview" = "Preview";
+"settings.previewText" = "The quick brown fox jumps over the lazy dog.";
+"settings.theme" = "Theme";
+"settings.readingTheme" = "Reading Theme";
+"settings.followSystemAppearance" = "Follow System Appearance";
+"settings.themePreview" = "Theme Preview";
+"settings.language" = "Language";
+"settings.languageLabel" = "Interface Language";
+
+// MARK: - Language Options
+"language.system" = "System";
+"language.zhHans" = "简体中文";
+"language.en" = "English";
+
+// MARK: - Theme Names
+"theme.light" = "Light";
+"theme.dark" = "Dark";
+"theme.sepia" = "Sepia";
+"theme.custom" = "Custom";
+
+// MARK: - Commands
+"commands.openFile" = "Open File...";
+"commands.toggleSidebar" = "Toggle Sidebar";
+"commands.bookmarkCurrentPage" = "Bookmark Current Page";
+
+// MARK: - Errors
+"error.title" = "Error";
+"error.ok" = "OK";
