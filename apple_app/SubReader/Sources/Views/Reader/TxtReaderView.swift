@@ -1,6 +1,6 @@
 // TxtReaderView — Reading view for plain-text files.
 //
-// Renders TXT content natively in Swift without the Rust engine.
+// Renders TXT content parsed by the Rust engine.
 // Supports chapter navigation, scroll progress tracking, and theme settings.
 
 import SwiftUI
@@ -13,7 +13,7 @@ struct TxtReaderView: View {
     @EnvironmentObject var appState: AppState
     @EnvironmentObject var container: DIContainer
 
-    @State private var txtBook: TxtContentStore.TxtBook?
+    @State private var parseResult: TxtParseResult?
     @State private var currentChapterIndex: Int = 0
     @State private var attributedContent: NSAttributedString = NSAttributedString()
     @State private var isLoading = true
@@ -67,7 +67,7 @@ struct TxtReaderView: View {
                 } label: {
                     Image(systemName: "chevron.right")
                 }
-                .disabled(txtBook == nil || currentChapterIndex >= (txtBook?.chapters.count ?? 1) - 1)
+                .disabled(parseResult == nil || currentChapterIndex >= (parseResult?.chapters.count ?? 1) - 1)
             }
         }
         .onAppear {
@@ -87,8 +87,8 @@ struct TxtReaderView: View {
 
     private var bottomBar: some View {
         HStack {
-            if let txtBook, !txtBook.chapters.isEmpty {
-                Text(txtBook.chapters[currentChapterIndex].title)
+            if let parseResult, !parseResult.chapters.isEmpty {
+                Text(parseResult.chapters[currentChapterIndex].title)
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
@@ -106,13 +106,13 @@ struct TxtReaderView: View {
     }
 
     private var chapterIndicator: String {
-        guard let txtBook else { return "" }
-        return "\(currentChapterIndex + 1)/\(txtBook.chapters.count)"
+        guard let parseResult else { return "" }
+        return "\(currentChapterIndex + 1)/\(parseResult.chapters.count)"
     }
 
     private var overallProgress: String {
-        guard let txtBook, !txtBook.chapters.isEmpty else { return "0%" }
-        let chapterWeight = 1.0 / Double(txtBook.chapters.count)
+        guard let parseResult, !parseResult.chapters.isEmpty else { return "0%" }
+        let chapterWeight = 1.0 / Double(parseResult.chapters.count)
         let pct = (Double(currentChapterIndex) + scrollPercentage / 100.0) * chapterWeight * 100.0
         return "\(Int(pct))%"
     }
@@ -123,8 +123,16 @@ struct TxtReaderView: View {
         isLoading = true
         errorMessage = nil
 
+        let engine = container.engine
+        let bookId = book.id
+        let fileURL = book.fileURL
+
         DispatchQueue.global(qos: .userInitiated).async {
-            let loaded = TxtContentStore.shared.loadIfNeeded(bookId: book.id, fileURL: book.fileURL)
+            let loaded = TxtContentStore.shared.loadIfNeeded(
+                bookId: bookId,
+                fileURL: fileURL,
+                engine: engine
+            )
 
             DispatchQueue.main.async {
                 guard let loaded else {
@@ -133,7 +141,7 @@ struct TxtReaderView: View {
                     return
                 }
 
-                txtBook = loaded
+                parseResult = loaded
                 renderCurrentChapter()
                 isLoading = false
             }
@@ -141,74 +149,34 @@ struct TxtReaderView: View {
     }
 
     private func renderCurrentChapter() {
-        guard let txtBook, currentChapterIndex < txtBook.chapters.count else { return }
+        guard let parseResult, currentChapterIndex < parseResult.chapters.count else { return }
 
-        let chapter = txtBook.chapters[currentChapterIndex]
+        let chapter = parseResult.chapters[currentChapterIndex]
         let renderer = DomRenderer(
             fontSize: fontSize,
             lineSpacing: lineSpacing,
             fontName: fontName
         )
 
-        // Convert TXT chapter to DomNodes for consistent rendering
-        let nodes = Self.txtChapterToDomNodes(chapter)
+        // Rust already provides DomNodes — render them directly
+        var nodes = chapter.nodes
+
+        // Prepend chapter title as heading node
+        let titleNode = DomNode(
+            nodeType: .heading(level: 2),
+            children: [DomNode(nodeType: .text, text: chapter.title)]
+        )
+        nodes.insert(titleNode, at: 0)
+
         attributedContent = renderer.render(nodes: nodes)
     }
 
     private func navigateChapter(offset: Int) {
-        guard let txtBook else { return }
+        guard let parseResult else { return }
         let newIndex = currentChapterIndex + offset
-        guard newIndex >= 0, newIndex < txtBook.chapters.count else { return }
+        guard newIndex >= 0, newIndex < parseResult.chapters.count else { return }
 
         currentChapterIndex = newIndex
         renderCurrentChapter()
-    }
-
-    // MARK: - TXT to DomNode Conversion
-
-    /// Convert a TXT chapter into DomNodes for rendering through the existing DomRenderer.
-    static func txtChapterToDomNodes(_ chapter: TxtContentStore.TxtChapter) -> [DomNode] {
-        var nodes: [DomNode] = []
-
-        // Chapter title as heading
-        nodes.append(DomNode(
-            nodeType: .heading(level: 2),
-            children: [DomNode(nodeType: .text, text: chapter.title)]
-        ))
-
-        // Split content into paragraphs by blank lines or line breaks
-        let paragraphs = chapter.content
-            .components(separatedBy: "\n")
-            .map { $0.trimmingCharacters(in: .whitespaces) }
-
-        var currentParagraph = ""
-
-        for line in paragraphs {
-            if line.isEmpty {
-                // Blank line — flush current paragraph
-                if !currentParagraph.isEmpty {
-                    nodes.append(DomNode(
-                        nodeType: .paragraph,
-                        children: [DomNode(nodeType: .text, text: currentParagraph)]
-                    ))
-                    currentParagraph = ""
-                }
-            } else {
-                if !currentParagraph.isEmpty {
-                    currentParagraph += "\n"
-                }
-                currentParagraph += line
-            }
-        }
-
-        // Flush remaining
-        if !currentParagraph.isEmpty {
-            nodes.append(DomNode(
-                nodeType: .paragraph,
-                children: [DomNode(nodeType: .text, text: currentParagraph)]
-            ))
-        }
-
-        return nodes
     }
 }

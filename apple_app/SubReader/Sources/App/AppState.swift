@@ -90,9 +90,9 @@ final class AppState: ObservableObject {
         }
     }
 
-    // MARK: - TXT Import (native Swift, no Rust engine)
+    // MARK: - TXT Import (via Rust engine)
 
-    /// Import a plain-text file entirely in Swift.
+    /// Import a plain-text file using the Rust engine for parsing.
     private func importTxtBook(data: Data, fileURL: URL?) {
         isLoading = true
         currentError = nil
@@ -100,18 +100,15 @@ final class AppState: ObservableObject {
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             guard let self else { return }
 
-            // Detect encoding: try UTF-8 first, then fallback to common CJK encodings
-            let content: String
-            if let utf8 = String(data: data, encoding: .utf8) {
-                content = utf8
-            } else if let gb = String(data: data, encoding: .init(rawValue: CFStringConvertEncodingToNSStringEncoding(CFStringEncoding(CFStringEncodings.GB_18030_2000.rawValue)))) {
-                content = gb
-            } else if let latin = String(data: data, encoding: .isoLatin1) {
-                content = latin
-            } else {
+            // Parse via Rust engine for high-performance encoding detection
+            let parseResult: TxtParseResult
+            switch self.engine.parseTxt(data: data) {
+            case .success(let result):
+                parseResult = result
+            case .failure(let error):
                 DispatchQueue.main.async {
                     self.isLoading = false
-                    self.currentError = .parseFailed
+                    self.currentError = error
                 }
                 return
             }
@@ -137,8 +134,8 @@ final class AppState: ObservableObject {
                 bookData: nil
             )
 
-            // Store parsed content for later reading
-            TxtContentStore.shared.store(bookId: bookId, content: content)
+            // Cache parsed result for later reading
+            TxtContentStore.shared.store(bookId: bookId, result: parseResult)
 
             DispatchQueue.main.async {
                 if !self.libraryBooks.contains(where: { $0.id == book.id }) {
