@@ -6,11 +6,12 @@ import ReaderBridge
 
 struct AppCommands: Commands {
     @ObservedObject var appState: AppState
+    @ObservedObject var languageManager = LanguageManager.shared
 
     var body: some Commands {
         // File menu
         CommandGroup(after: .newItem) {
-            Button("Open File...") {
+            Button(L("commands.openFile")) {
                 openFile()
             }
             .keyboardShortcut("o", modifiers: .command)
@@ -18,14 +19,14 @@ struct AppCommands: Commands {
 
         // View menu
         CommandGroup(after: .sidebar) {
-            Button("Toggle Sidebar") {
+            Button(L("commands.toggleSidebar")) {
                 appState.isSidebarVisible.toggle()
             }
             .keyboardShortcut("t", modifiers: .command)
 
             Divider()
 
-            Button("Bookmark Current Page") {
+            Button(L("commands.bookmarkCurrentPage")) {
                 NotificationCenter.default.post(name: .addBookmark, object: nil)
             }
             .keyboardShortcut("b", modifiers: .command)
