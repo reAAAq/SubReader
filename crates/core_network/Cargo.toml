@@ -1,0 +1,10 @@
+[package]
+name = "core_network"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+shared_types = { workspace = true }
+core_sync = { workspace = true }
+serde = { workspace = true }
+thiserror = { workspace = true }

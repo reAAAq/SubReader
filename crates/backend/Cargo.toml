@@ -1,0 +1,17 @@
+[package]
+name = "reader-backend"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "reader-backend"
+path = "src/main.rs"
+
+[dependencies]
+shared_types = { workspace = true }
+core_sync = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+axum = { workspace = true }

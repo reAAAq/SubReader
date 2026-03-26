@@ -1,0 +1,10 @@
+[package]
+name = "core_sync"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+shared_types = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+uuid = { workspace = true }

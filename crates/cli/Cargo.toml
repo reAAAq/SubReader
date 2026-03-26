@@ -1,0 +1,16 @@
+[package]
+name = "reader-cli"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "reader"
+path = "src/main.rs"
+
+[dependencies]
+shared_types = { workspace = true }
+core_parser = { workspace = true }
+core_state = { workspace = true }
+core_storage = { workspace = true }
+anyhow = { workspace = true }
+serde_json = { workspace = true }

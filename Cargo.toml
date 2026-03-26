@@ -1,0 +1,73 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/shared_types",
+    "crates/core_parser",
+    "crates/core_state",
+    "crates/core_sync",
+    "crates/core_storage",
+    "crates/core_auth",
+    "crates/core_network",
+    "crates/ffi_c",
+    "crates/ffi_wasm",
+    "crates/cli",
+    "crates/backend",
+    "crates/integration_tests",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+rust-version = "1.75"
+
+[workspace.dependencies]
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# Error handling
+thiserror = "2.0"
+anyhow = "1.0"
+
+# UUID
+uuid = { version = "1.0", features = ["v4", "serde"] }
+
+# Database
+rusqlite = { version = "0.31", features = ["bundled"] }
+
+# XML parsing
+quick-xml = "0.36"
+
+# ZIP handling
+zip = { version = "2.0", default-features = false, features = ["deflate"] }
+
+# Encoding detection
+chardetng = "0.1"
+encoding_rs = "0.8"
+
+# WASM
+wasm-bindgen = "0.2"
+wasm-bindgen-test = "0.3"
+
+# Async runtime (for backend)
+tokio = { version = "1.0", features = ["full"] }
+axum = "0.7"
+
+# Crypto
+sha2 = "0.10"
+
+# Shared crates
+shared_types = { path = "crates/shared_types" }
+core_parser = { path = "crates/core_parser" }
+core_state = { path = "crates/core_state" }
+core_sync = { path = "crates/core_sync" }
+core_storage = { path = "crates/core_storage" }
+core_auth = { path = "crates/core_auth" }
+core_network = { path = "crates/core_network" }
+
+[profile.release]
+lto = true
+codegen-units = 1
+opt-level = "z"
+strip = true

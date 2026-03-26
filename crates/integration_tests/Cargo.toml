@@ -1,0 +1,14 @@
+[package]
+name = "integration_tests"
+version.workspace = true
+edition.workspace = true
+publish = false
+
+[dependencies]
+shared_types = { workspace = true }
+core_parser = { workspace = true }
+core_state = { workspace = true }
+core_storage = { workspace = true }
+core_sync = { workspace = true }
+serde_json = { workspace = true }
+zip = { workspace = true }

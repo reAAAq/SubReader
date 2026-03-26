@@ -1,0 +1,9 @@
+[package]
+name = "core_auth"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+shared_types = { workspace = true }
+serde = { workspace = true }
+thiserror = { workspace = true }

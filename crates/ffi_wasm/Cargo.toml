@@ -1,0 +1,20 @@
+[package]
+name = "ffi_wasm"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+shared_types = { workspace = true }
+core_parser = { workspace = true }
+core_sync = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+wasm-bindgen = { workspace = true }
+uuid = { workspace = true }
+
+[dev-dependencies]
+wasm-bindgen-test = { workspace = true }
+zip = { workspace = true }
