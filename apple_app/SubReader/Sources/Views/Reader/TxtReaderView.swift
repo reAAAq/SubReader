@@ -12,6 +12,7 @@ struct TxtReaderView: View {
 
     @EnvironmentObject var appState: AppState
     @EnvironmentObject var container: DIContainer
+    @ObservedObject private var languageManager = LanguageManager.shared
 
     @State private var parseResult: TxtParseResult?
     @State private var currentChapterIndex: Int = 0
@@ -27,7 +28,7 @@ struct TxtReaderView: View {
     var body: some View {
         ZStack {
             if isLoading {
-                ProgressView("Loading...")
+                ProgressView(L("reader.loading"))
             } else if let error = errorMessage {
                 VStack(spacing: 12) {
                     Image(systemName: "exclamationmark.triangle")
@@ -136,7 +137,7 @@ struct TxtReaderView: View {
 
             DispatchQueue.main.async {
                 guard let loaded else {
-                    errorMessage = "Failed to load text file. The file may have been moved or deleted."
+                    errorMessage = L("reader.failedLoadTxt")
                     isLoading = false
                     return
                 }

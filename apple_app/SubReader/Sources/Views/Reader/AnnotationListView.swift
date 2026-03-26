@@ -5,6 +5,7 @@ import ReaderModels
 
 struct AnnotationListView: View {
     @ObservedObject var manager: AnnotationManager
+    @ObservedObject private var languageManager = LanguageManager.shared
     var onSelectAnnotation: ((Annotation) -> Void)?
 
     var body: some View {
@@ -14,10 +15,10 @@ struct AnnotationListView: View {
                     Image(systemName: "highlighter")
                         .font(.title)
                         .foregroundStyle(.secondary)
-                    Text("No Annotations")
+                    Text(L("annotations.noAnnotations"))
                         .font(.headline)
                         .foregroundStyle(.secondary)
-                    Text("Select text to add highlights and notes")
+                    Text(L("annotations.hint"))
                         .font(.caption)
                         .foregroundStyle(.tertiary)
                 }
@@ -40,7 +41,7 @@ struct AnnotationListView: View {
                                             .font(.body)
                                             .lineLimit(2)
                                     } else {
-                                        Text("Highlight")
+                                        Text(L("annotations.highlight"))
                                             .font(.body)
                                             .foregroundStyle(.secondary)
                                     }
@@ -54,7 +55,7 @@ struct AnnotationListView: View {
                         }
                         .buttonStyle(.plain)
                         .contextMenu {
-                            Button("Delete", role: .destructive) {
+                            Button(L("annotations.delete"), role: .destructive) {
                                 manager.deleteAnnotation(id: annotation.id)
                             }
                         }
@@ -62,7 +63,7 @@ struct AnnotationListView: View {
                 }
             }
         }
-        .navigationTitle("Annotations")
+        .navigationTitle(L("annotations.title"))
     }
 
     private func colorFromRgba(_ rgba: String) -> Color {

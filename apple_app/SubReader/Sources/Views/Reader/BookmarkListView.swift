@@ -5,6 +5,7 @@ import ReaderModels
 
 struct BookmarkListView: View {
     @ObservedObject var manager: BookmarkManager
+    @ObservedObject private var languageManager = LanguageManager.shared
     var onSelectBookmark: ((Bookmark) -> Void)?
 
     var body: some View {
@@ -14,10 +15,10 @@ struct BookmarkListView: View {
                     Image(systemName: "bookmark")
                         .font(.title)
                         .foregroundStyle(.secondary)
-                    Text("No Bookmarks")
+                    Text(L("bookmarks.noBookmarks"))
                         .font(.headline)
                         .foregroundStyle(.secondary)
-                    Text("Press ⌘B to bookmark the current page")
+                    Text(L("bookmarks.hint"))
                         .font(.caption)
                         .foregroundStyle(.tertiary)
                 }
@@ -29,7 +30,7 @@ struct BookmarkListView: View {
                             onSelectBookmark?(bookmark)
                         } label: {
                             VStack(alignment: .leading, spacing: 4) {
-                                Text(bookmark.title ?? "Untitled Bookmark")
+                                Text(bookmark.title ?? L("bookmarks.untitled"))
                                     .font(.body)
                                     .lineLimit(1)
 
@@ -41,7 +42,7 @@ struct BookmarkListView: View {
                         }
                         .buttonStyle(.plain)
                         .contextMenu {
-                            Button("Delete", role: .destructive) {
+                            Button(L("bookmarks.delete"), role: .destructive) {
                                 manager.deleteBookmark(id: bookmark.id)
                             }
                         }
@@ -49,7 +50,7 @@ struct BookmarkListView: View {
                 }
             }
         }
-        .navigationTitle("Bookmarks")
+        .navigationTitle(L("bookmarks.title"))
     }
 
     private func formatDate(_ timestamp: UInt64) -> String {

@@ -13,6 +13,7 @@ struct ReaderView: View {
 
     @EnvironmentObject var appState: AppState
     @EnvironmentObject var container: DIContainer
+    @ObservedObject private var languageManager = LanguageManager.shared
 
     @State private var metadata: BookMetadata?
     @State private var currentChapterIndex: Int = 0
@@ -37,7 +38,7 @@ struct ReaderView: View {
     var body: some View {
         ZStack {
             if isLoading {
-                ProgressView("Loading chapter...")
+                ProgressView(L("reader.loadingChapter"))
             } else if let error = errorMessage {
                 VStack(spacing: 12) {
                     Image(systemName: "exclamationmark.triangle")
@@ -60,7 +61,7 @@ struct ReaderView: View {
                 }
             }
         }
-        .navigationTitle(metadata?.title ?? "Reading")
+        .navigationTitle(metadata?.title ?? L("reader.reading"))
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
                 Button {
@@ -137,7 +138,7 @@ struct ReaderView: View {
                 return entry.title
             }
         }
-        return "Chapter \(currentChapterIndex + 1)"
+        return L("reader.chapter", currentChapterIndex + 1)
     }
 
     // MARK: - Data Loading
@@ -147,7 +148,7 @@ struct ReaderView: View {
         errorMessage = nil
 
         guard let book = appState.libraryBooks.first(where: { $0.id == bookId }) else {
-            errorMessage = "Book not found in library"
+            errorMessage = L("reader.bookNotFound")
             isLoading = false
             return
         }
@@ -156,7 +157,7 @@ struct ReaderView: View {
             // Reopen the EPUB file in the Rust engine
             guard appState.reopenEpubForReading(book) else {
                 DispatchQueue.main.async {
-                    errorMessage = "Failed to open EPUB file"
+                    errorMessage = L("reader.failedOpenEpub")
                     isLoading = false
                 }
                 return
@@ -166,7 +167,7 @@ struct ReaderView: View {
             let metaResult = appState.engine.getMetadata()
             guard case .success(let meta) = metaResult else {
                 DispatchQueue.main.async {
-                    errorMessage = "Failed to load book metadata"
+                    errorMessage = L("reader.failedLoadMetadata")
                     isLoading = false
                 }
                 return
@@ -206,9 +207,9 @@ struct ReaderView: View {
                     renderContent()
                 case .failure:
                     if spine.isEmpty {
-                        errorMessage = "No chapters found in this book"
+                        errorMessage = L("reader.noChapters")
                     } else {
-                        errorMessage = "Failed to load chapter content"
+                        errorMessage = L("reader.failedLoadChapter")
                     }
                 }
                 isLoading = false
@@ -255,7 +256,7 @@ struct ReaderView: View {
                     // Cache the result
                     container.chapterCache.set(key: cacheKey, value: attributedContent)
                 case .failure:
-                    errorMessage = "Failed to load chapter"
+                    errorMessage = L("reader.failedLoadChapterShort")
                 }
                 isLoading = false
             }
