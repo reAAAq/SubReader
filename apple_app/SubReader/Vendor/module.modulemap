@@ -1,0 +1,5 @@
+module CReaderCore {
+    header "reader_core.h"
+    link "reader_core"
+    export *
+}
