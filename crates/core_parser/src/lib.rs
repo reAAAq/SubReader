@@ -10,3 +10,4 @@ pub mod txt;
 pub use epub::EpubParser;
 pub use error::ParseError;
 pub use txt::TxtParser;
+pub use txt::{TxtChapter, TxtParseResult};

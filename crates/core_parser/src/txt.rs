@@ -10,6 +10,26 @@ use shared_types::{DomNode, NodeType};
 
 use crate::error::ParseError;
 
+/// A chapter extracted from a TXT file.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct TxtChapter {
+    /// Chapter title.
+    pub title: String,
+    /// Chapter content as DOM nodes.
+    pub nodes: Vec<DomNode>,
+}
+
+/// Full parse result for a TXT file with chapters.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct TxtParseResult {
+    /// Detected encoding name.
+    pub encoding: String,
+    /// Whether replacement characters were used.
+    pub had_replacements: bool,
+    /// Chapters extracted from the text.
+    pub chapters: Vec<TxtChapter>,
+}
+
 /// Result of encoding detection.
 #[derive(Debug, Clone)]
 pub struct EncodingResult {
@@ -80,6 +100,32 @@ impl TxtParser {
 
         let nodes = Self::split_paragraphs(&full_content);
         Ok((nodes, encoding_result))
+    }
+
+    /// Parse raw bytes into chapters with automatic encoding detection.
+    /// Detects chapter headings (Chinese/English patterns) and splits accordingly.
+    /// Falls back to size-based splitting if no headings are found.
+    pub fn parse_with_chapters(data: &[u8]) -> Result<TxtParseResult, ParseError> {
+        if data.is_empty() {
+            return Err(ParseError::EmptyContent);
+        }
+
+        let encoding_result = Self::detect_and_decode(data)?;
+        let chapters = split_into_chapters(&encoding_result.content);
+
+        let txt_chapters: Vec<TxtChapter> = chapters
+            .into_iter()
+            .map(|(title, content)| {
+                let nodes = Self::split_paragraphs(&content);
+                TxtChapter { title, nodes }
+            })
+            .collect();
+
+        Ok(TxtParseResult {
+            encoding: encoding_result.encoding_name,
+            had_replacements: encoding_result.had_replacements,
+            chapters: txt_chapters,
+        })
     }
 
     /// Detect encoding and decode bytes to UTF-8 string.
@@ -226,6 +272,114 @@ fn split_into_paragraphs(text: &str) -> Vec<&str> {
     }
 
     paragraphs
+}
+
+/// Split text into chapters by detecting heading patterns.
+/// Returns a Vec of (title, content) pairs.
+fn split_into_chapters(text: &str) -> Vec<(String, String)> {
+    // Chinese chapter patterns: 第X章, 第X节, 第X回, 第X卷, 第X篇
+    // English chapter patterns: Chapter N, CHAPTER N
+    let chapter_re = regex::Regex::new(
+        r"(?m)^[\s]*(?:第[一二三四五六七八九十百千零\d]+[章节回卷篇]|[Cc][Hh][Aa][Pp][Tt][Ee][Rr]\s+\d+)[\s:：.、]*(.*?)$"
+    ).unwrap();
+
+    let matches: Vec<_> = chapter_re.find_iter(text).collect();
+
+    if matches.len() >= 2 {
+        let mut chapters = Vec::new();
+
+        // Content before the first chapter heading
+        let pre_content = text[..matches[0].start()].trim();
+        if !pre_content.is_empty() {
+            chapters.push(("Preface".to_string(), pre_content.to_string()));
+        }
+
+        for (i, m) in matches.iter().enumerate() {
+            let title = m.as_str().trim().to_string();
+            let content_start = m.end();
+            let content_end = if i + 1 < matches.len() {
+                matches[i + 1].start()
+            } else {
+                text.len()
+            };
+            let content = text[content_start..content_end].trim().to_string();
+            if !content.is_empty() || !title.is_empty() {
+                chapters.push((title, content));
+            }
+        }
+
+        return chapters;
+    }
+
+    // No chapter headings found — split by size (~5000 chars each)
+    split_by_size(text, 5000)
+}
+
+/// Split text into roughly equal-sized chunks.
+fn split_by_size(text: &str, chunk_size: usize) -> Vec<(String, String)> {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return vec![];
+    }
+
+    if trimmed.len() <= chunk_size {
+        return vec![("Full Text".to_string(), trimmed.to_string())];
+    }
+
+    let mut chapters = Vec::new();
+    let mut start = 0;
+    let mut chapter_num = 1;
+    let bytes = trimmed.as_bytes();
+
+    while start < trimmed.len() {
+        let mut end = (start + chunk_size).min(trimmed.len());
+
+        // Try to break at a paragraph boundary (double newline)
+        if end < trimmed.len() {
+            let search_start = if end > 200 { end - 200 } else { start };
+            // Search backwards for a double newline
+            let mut best_break = None;
+            let mut j = end;
+            while j > search_start {
+                if j >= 2 && bytes[j - 1] == b'\n' && bytes[j - 2] == b'\n' {
+                    best_break = Some(j);
+                    break;
+                }
+                if j >= 4
+                    && bytes[j - 1] == b'\n'
+                    && bytes[j - 2] == b'\r'
+                    && bytes[j - 3] == b'\n'
+                    && bytes[j - 4] == b'\r'
+                {
+                    best_break = Some(j);
+                    break;
+                }
+                j -= 1;
+            }
+            if let Some(bp) = best_break {
+                end = bp;
+            } else {
+                // Fall back to single newline
+                let mut j2 = end;
+                while j2 > search_start {
+                    if bytes[j2 - 1] == b'\n' {
+                        end = j2;
+                        break;
+                    }
+                    j2 -= 1;
+                }
+            }
+        }
+
+        let chunk = trimmed[start..end].trim();
+        if !chunk.is_empty() {
+            chapters.push((format!("Section {}", chapter_num), chunk.to_string()));
+            chapter_num += 1;
+        }
+        start = end;
+    }
+
+    chapters
 }
 
 #[cfg(test)]
