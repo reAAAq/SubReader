@@ -144,6 +144,72 @@ public final class RustCore: ReaderEngineProtocol, @unchecked Sendable {
         }
     }
 
+    public func getToc() -> Result<[TocEntry], ReaderError> {
+        ffiQueue.sync {
+            let start = CFAbsoluteTimeGetCurrent()
+            var outPtr: UnsafePointer<UInt8>?
+            var outLen: UInt32 = 0
+
+            let code = reader_get_toc(&outPtr, &outLen)
+            if let error = ReaderError.from(code: code) {
+                return .failure(error)
+            }
+
+            let result: Result<[TocEntry], ReaderError> = decodeJSON(ptr: outPtr, len: outLen)
+            let elapsed = (CFAbsoluteTimeGetCurrent() - start) * 1000
+            Self.logger.debug("reader_get_toc: \(elapsed, format: .fixed(precision: 2))ms")
+            return result
+        }
+    }
+
+    public func getSpine() -> Result<[String], ReaderError> {
+        ffiQueue.sync {
+            let start = CFAbsoluteTimeGetCurrent()
+            var outPtr: UnsafePointer<UInt8>?
+            var outLen: UInt32 = 0
+
+            let code = reader_get_spine(&outPtr, &outLen)
+            if let error = ReaderError.from(code: code) {
+                return .failure(error)
+            }
+
+            let result: Result<[String], ReaderError> = decodeJSON(ptr: outPtr, len: outLen)
+            let elapsed = (CFAbsoluteTimeGetCurrent() - start) * 1000
+            Self.logger.debug("reader_get_spine: \(elapsed, format: .fixed(precision: 2))ms")
+            return result
+        }
+    }
+
+    public func getCoverImage(coverId: String) -> Result<Data, ReaderError> {
+        ffiQueue.sync {
+            let start = CFAbsoluteTimeGetCurrent()
+            var outPtr: UnsafePointer<UInt8>?
+            var outLen: UInt32 = 0
+
+            let code = coverId.withCString { coverCStr in
+                reader_get_cover_image(
+                    UnsafeRawPointer(coverCStr).assumingMemoryBound(to: UInt8.self),
+                    UInt32(coverId.utf8.count),
+                    &outPtr,
+                    &outLen
+                )
+            }
+
+            if let error = ReaderError.from(code: code) {
+                return .failure(error)
+            }
+
+            guard let ptr = outPtr, outLen > 0 else {
+                return .failure(.notFound)
+            }
+
+            let data = Data(bytes: ptr, count: Int(outLen))
+            let elapsed = (CFAbsoluteTimeGetCurrent() - start) * 1000
+            Self.logger.debug("reader_get_cover_image: \(elapsed, format: .fixed(precision: 2))ms, \(outLen) bytes")
+            return .success(data)
+        }
+    }
+
     // MARK: - Progress
 
     public func getProgress(bookId: String) -> Result<ReadingProgress, ReaderError> {

@@ -11,6 +11,8 @@ public final class MockReaderEngine: ReaderEngineProtocol, @unchecked Sendable {
     public var shouldFail = false
     public var mockMetadata: BookMetadata?
     public var mockChapterContent: [DomNode] = []
+    public var mockToc: [TocEntry] = []
+    public var mockSpine: [String] = []
     public var mockProgress: ReadingProgress?
     public var mockBookmarks: [Bookmark] = []
     public var mockAnnotations: [Annotation] = []
@@ -79,6 +81,18 @@ public final class MockReaderEngine: ReaderEngineProtocol, @unchecked Sendable {
 
     public func getChapterContent(path: String) -> Result<[DomNode], ReaderError> {
         failOrSucceed(mockChapterContent)
+    }
+
+    public func getToc() -> Result<[TocEntry], ReaderError> {
+        failOrSucceed(mockToc)
+    }
+
+    public func getSpine() -> Result<[String], ReaderError> {
+        failOrSucceed(mockSpine)
+    }
+
+    public func getCoverImage(coverId: String) -> Result<Data, ReaderError> {
+        .failure(.notFound)
     }
 
     public func getProgress(bookId: String) -> Result<ReadingProgress, ReaderError> {

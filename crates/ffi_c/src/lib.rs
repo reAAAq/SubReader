@@ -281,6 +281,160 @@ pub unsafe extern "C" fn reader_get_chapter_content(
     .unwrap_or(FFI_ERR_PANIC)
 }
 
+// ─── TOC / Spine / Cover Operations ─────────────────────────────────────────
+
+/// Get the table of contents as JSON.
+///
+/// # Safety
+/// `out_ptr` and `out_len` must be valid pointers.
+#[no_mangle]
+pub unsafe extern "C" fn reader_get_toc(out_ptr: *mut *const u8, out_len: *mut u32) -> i32 {
+    catch_unwind(|| {
+        if out_ptr.is_null() || out_len.is_null() {
+            return FFI_ERR_NULL_PTR;
+        }
+
+        let mut guard = match ENGINE.lock() {
+            Ok(g) => g,
+            Err(_) => return FFI_ERR_UNKNOWN,
+        };
+
+        let engine = match guard.as_mut() {
+            Some(e) => e,
+            None => return FFI_ERR_NOT_INIT,
+        };
+
+        let parser = match engine.current_book.as_mut() {
+            Some(p) => p,
+            None => return FFI_ERR_NOT_FOUND,
+        };
+
+        match parser.parse_toc() {
+            Ok(toc) => match serde_json::to_string(&toc) {
+                Ok(json) => {
+                    let (ptr, len) = set_return_buffer(engine, json);
+                    unsafe {
+                        *out_ptr = ptr;
+                        *out_len = len;
+                    }
+                    FFI_OK
+                }
+                Err(_) => FFI_ERR_UNKNOWN,
+            },
+            Err(_) => FFI_ERR_PARSE_FAILED,
+        }
+    })
+    .unwrap_or(FFI_ERR_PANIC)
+}
+
+/// Get the spine (ordered content document paths) as JSON.
+///
+/// # Safety
+/// `out_ptr` and `out_len` must be valid pointers.
+#[no_mangle]
+pub unsafe extern "C" fn reader_get_spine(out_ptr: *mut *const u8, out_len: *mut u32) -> i32 {
+    catch_unwind(|| {
+        if out_ptr.is_null() || out_len.is_null() {
+            return FFI_ERR_NULL_PTR;
+        }
+
+        let mut guard = match ENGINE.lock() {
+            Ok(g) => g,
+            Err(_) => return FFI_ERR_UNKNOWN,
+        };
+
+        let engine = match guard.as_mut() {
+            Some(e) => e,
+            None => return FFI_ERR_NOT_INIT,
+        };
+
+        let parser = match engine.current_book.as_mut() {
+            Some(p) => p,
+            None => return FFI_ERR_NOT_FOUND,
+        };
+
+        match parser.get_spine() {
+            Ok(spine) => match serde_json::to_string(&spine) {
+                Ok(json) => {
+                    let (ptr, len) = set_return_buffer(engine, json);
+                    unsafe {
+                        *out_ptr = ptr;
+                        *out_len = len;
+                    }
+                    FFI_OK
+                }
+                Err(_) => FFI_ERR_UNKNOWN,
+            },
+            Err(_) => FFI_ERR_PARSE_FAILED,
+        }
+    })
+    .unwrap_or(FFI_ERR_PANIC)
+}
+
+/// Get the cover image as raw bytes.
+///
+/// The cover_id is the manifest item id from BookMetadata.cover_image_ref.
+///
+/// # Safety
+/// All pointer parameters must be valid.
+#[no_mangle]
+pub unsafe extern "C" fn reader_get_cover_image(
+    cover_id_ptr: *const u8,
+    cover_id_len: u32,
+    out_ptr: *mut *const u8,
+    out_len: *mut u32,
+) -> i32 {
+    catch_unwind(|| {
+        let cover_id = match unsafe { ptr_to_str(cover_id_ptr, cover_id_len) } {
+            Ok(s) => s.to_string(),
+            Err(code) => return code,
+        };
+
+        if out_ptr.is_null() || out_len.is_null() {
+            return FFI_ERR_NULL_PTR;
+        }
+
+        let mut guard = match ENGINE.lock() {
+            Ok(g) => g,
+            Err(_) => return FFI_ERR_UNKNOWN,
+        };
+
+        let engine = match guard.as_mut() {
+            Some(e) => e,
+            None => return FFI_ERR_NOT_INIT,
+        };
+
+        let parser = match engine.current_book.as_mut() {
+            Some(p) => p,
+            None => return FFI_ERR_NOT_FOUND,
+        };
+
+        match parser.get_cover_image(&cover_id) {
+            Ok(image_data) => {
+                // Store raw bytes in return_buffer as a String (binary-safe via Latin-1)
+                // We need a separate buffer for binary data
+                engine.return_buffer = String::new();
+                // Use a raw byte approach: store in return_buffer's backing allocation
+                // Actually, we need to store binary data. Let's use the return_buffer
+                // by converting to a string that preserves bytes.
+                // Better approach: store the Vec<u8> directly and return pointer to it.
+                let len = image_data.len() as u32;
+                // We'll store the image data as the return_buffer's bytes
+                // Since return_buffer is a String, we use unsafe to store arbitrary bytes
+                engine.return_buffer = unsafe { String::from_utf8_unchecked(image_data) };
+                let ptr = engine.return_buffer.as_ptr();
+                unsafe {
+                    *out_ptr = ptr;
+                    *out_len = len;
+                }
+                FFI_OK
+            }
+            Err(_) => FFI_ERR_NOT_FOUND,
+        }
+    })
+    .unwrap_or(FFI_ERR_PANIC)
+}
+
 // ─── Progress Operations ─────────────────────────────────────────────────────
 
 /// Get reading progress as JSON.

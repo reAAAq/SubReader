@@ -536,6 +536,72 @@ impl EpubParser {
         Ok(paths)
     }
 
+    /// Get the cover image data by resolving the cover item id from the manifest.
+    ///
+    /// Returns the raw image bytes (JPEG, PNG, etc.) or an error if no cover is found.
+    pub fn get_cover_image(&mut self, cover_id: &str) -> Result<Vec<u8>, ParseError> {
+        let opf_data = self.read_file_from_archive(&self.opf_path.clone())?;
+        let opf_str = String::from_utf8(opf_data)
+            .map_err(|e| ParseError::InvalidEpub(format!("Invalid UTF-8 in OPF: {e}")))?;
+
+        let mut reader = Reader::from_str(&opf_str);
+        reader.config_mut().trim_text(true);
+
+        let mut cover_href: Option<String> = None;
+        let mut in_manifest = false;
+        let mut buf = Vec::new();
+
+        loop {
+            match reader.read_event_into(&mut buf) {
+                Ok(Event::Start(ref e)) => {
+                    let name = String::from_utf8_lossy(e.name().as_ref()).to_string();
+                    if name == "manifest" || name.ends_with(":manifest") {
+                        in_manifest = true;
+                    }
+                }
+                Ok(Event::Empty(ref e)) if in_manifest => {
+                    let name = String::from_utf8_lossy(e.name().as_ref()).to_string();
+                    if name == "item" || name.ends_with(":item") {
+                        let mut item_id = String::new();
+                        let mut href = String::new();
+                        let mut properties = String::new();
+                        for attr in e.attributes().flatten() {
+                            match attr.key.as_ref() {
+                                b"id" => item_id = String::from_utf8_lossy(&attr.value).to_string(),
+                                b"href" => href = String::from_utf8_lossy(&attr.value).to_string(),
+                                b"properties" => {
+                                    properties = String::from_utf8_lossy(&attr.value).to_string()
+                                }
+                                _ => {}
+                            }
+                        }
+                        // Match by item id or by cover-image property (EPUB 3)
+                        if item_id == cover_id || properties.contains("cover-image") {
+                            cover_href = Some(href);
+                        }
+                    }
+                }
+                Ok(Event::End(ref e)) => {
+                    let name = String::from_utf8_lossy(e.name().as_ref()).to_string();
+                    if name == "manifest" || name.ends_with(":manifest") {
+                        in_manifest = false;
+                    }
+                }
+                Ok(Event::Eof) => break,
+                Err(e) => return Err(ParseError::InvalidXml(format!("OPF manifest: {e}"))),
+                _ => {}
+            }
+            buf.clear();
+        }
+
+        let href = cover_href.ok_or_else(|| {
+            ParseError::InvalidEpub(format!("Cover item '{}' not found in manifest", cover_id))
+        })?;
+
+        let full_path = format!("{}{}", self.opf_base, href);
+        self.read_file_from_archive(&full_path)
+    }
+
     /// Parse a single XHTML content document into a DOM tree.
     pub fn parse_chapter(&mut self, path: &str) -> Result<Vec<DomNode>, ParseError> {
         let data = self.read_file_from_archive(path)?;

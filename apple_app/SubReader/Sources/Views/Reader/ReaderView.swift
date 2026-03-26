@@ -22,6 +22,11 @@ struct ReaderView: View {
     @State private var isLoading = true
     @State private var errorMessage: String?
 
+    /// Ordered list of content document paths from the EPUB spine.
+    @State private var spinePaths: [String] = []
+    /// Flattened TOC entries for display.
+    @State private var tocEntries: [TocEntry] = []
+
     @AppStorage("fontSize") private var fontSize: Double = 16
     @AppStorage("lineSpacing") private var lineSpacing: Double = 1.5
     @AppStorage("fontName") private var fontName: String = "System"
@@ -120,11 +125,17 @@ struct ReaderView: View {
     }
 
     private var currentChapterTitle: String {
-        guard let meta = metadata else { return "" }
-        // Flatten TOC to find current chapter
-        let flatToc = flattenToc(meta.authors.isEmpty ? [] : []) // Will use actual TOC
-        if currentChapterIndex < flatToc.count {
-            return flatToc[currentChapterIndex].title
+        // Try to find a TOC entry matching the current spine path
+        if currentChapterIndex < spinePaths.count {
+            let currentPath = spinePaths[currentChapterIndex]
+            // Match TOC entry by href (strip fragment)
+            if let entry = tocEntries.first(where: { href in
+                let basePath = currentPath.components(separatedBy: "#").first ?? currentPath
+                let tocBase = href.href.components(separatedBy: "#").first ?? href.href
+                return basePath == tocBase
+            }) {
+                return entry.title
+            }
         }
         return "Chapter \(currentChapterIndex + 1)"
     }
@@ -135,7 +146,22 @@ struct ReaderView: View {
         isLoading = true
         errorMessage = nil
 
+        guard let book = appState.libraryBooks.first(where: { $0.id == bookId }) else {
+            errorMessage = "Book not found in library"
+            isLoading = false
+            return
+        }
+
         DispatchQueue.global(qos: .userInitiated).async {
+            // Reopen the EPUB file in the Rust engine
+            guard appState.reopenEpubForReading(book) else {
+                DispatchQueue.main.async {
+                    errorMessage = "Failed to open EPUB file"
+                    isLoading = false
+                }
+                return
+            }
+
             // Load metadata
             let metaResult = appState.engine.getMetadata()
             guard case .success(let meta) = metaResult else {
@@ -146,19 +172,32 @@ struct ReaderView: View {
                 return
             }
 
+            // Load spine (ordered chapter paths)
+            let spineResult = appState.engine.getSpine()
+            let spine = (try? spineResult.get()) ?? []
+
+            // Load TOC
+            let tocResult = appState.engine.getToc()
+            let toc = (try? tocResult.get()) ?? []
+            let flatToc = flattenToc(toc)
+
             // Load progress
             let progResult = appState.engine.getProgress(bookId: bookId)
             let prog = try? progResult.get()
 
             // Determine chapter to load
-            let flatToc = flattenToc(meta.authors.isEmpty ? [] : []) // Simplified
-            let chapterPath = flatToc.first?.href ?? ""
+            let chapterPath = spine.first ?? ""
 
             // Load chapter content
-            let contentResult = appState.engine.getChapterContent(path: chapterPath)
+            var contentResult: Result<[DomNode], ReaderError> = .failure(.notFound)
+            if !chapterPath.isEmpty {
+                contentResult = appState.engine.getChapterContent(path: chapterPath)
+            }
 
             DispatchQueue.main.async {
                 metadata = meta
+                spinePaths = spine
+                tocEntries = flatToc
                 progress = prog
 
                 switch contentResult {
@@ -166,7 +205,11 @@ struct ReaderView: View {
                     chapterNodes = nodes
                     renderContent()
                 case .failure:
-                    errorMessage = "Failed to load chapter content"
+                    if spine.isEmpty {
+                        errorMessage = "No chapters found in this book"
+                    } else {
+                        errorMessage = "Failed to load chapter content"
+                    }
                 }
                 isLoading = false
             }
@@ -187,19 +230,12 @@ struct ReaderView: View {
 
     private func navigateChapter(offset: Int) {
         let newIndex = currentChapterIndex + offset
-        guard newIndex >= 0 else { return }
+        guard newIndex >= 0, newIndex < spinePaths.count else { return }
 
         currentChapterIndex = newIndex
         isLoading = true
 
-        guard let meta = metadata else { return }
-        let flatToc = flattenToc(meta.authors.isEmpty ? [] : [])
-        guard newIndex < flatToc.count else {
-            isLoading = false
-            return
-        }
-
-        let chapterPath = flatToc[newIndex].href
+        let chapterPath = spinePaths[newIndex]
 
         // Check cache first
         let cacheKey = "\(chapterPath)_\(Int(fontSize))_\(fontName)"
@@ -228,14 +264,11 @@ struct ReaderView: View {
 
     private func preloadAdjacentChapters() {
         // Preload next and previous chapters in background
-        guard let meta = metadata else { return }
-        let flatToc = flattenToc(meta.authors.isEmpty ? [] : [])
-
         for offset in [-1, 1] {
             let idx = currentChapterIndex + offset
-            guard idx >= 0, idx < flatToc.count else { continue }
+            guard idx >= 0, idx < spinePaths.count else { continue }
 
-            let path = flatToc[idx].href
+            let path = spinePaths[idx]
             let cacheKey = "\(path)_\(Int(fontSize))_\(fontName)"
 
             // Skip if already cached

@@ -32,6 +32,15 @@ public protocol ReaderEngineProtocol: Sendable {
     /// Get chapter content as a DOM tree.
     func getChapterContent(path: String) -> Result<[DomNode], ReaderError>
 
+    /// Get the table of contents.
+    func getToc() -> Result<[TocEntry], ReaderError>
+
+    /// Get the spine (ordered list of content document paths).
+    func getSpine() -> Result<[String], ReaderError>
+
+    /// Get the cover image data by manifest item id.
+    func getCoverImage(coverId: String) -> Result<Data, ReaderError>
+
     // MARK: - Progress
 
     /// Get reading progress for a book.

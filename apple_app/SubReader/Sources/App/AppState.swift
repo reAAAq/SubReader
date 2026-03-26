@@ -20,9 +20,19 @@ struct LibraryBook: Identifiable, Hashable {
     var progress: Double
     var coverData: Data?
     var fileURL: URL?
+    /// Raw EPUB data kept in memory so we can reopen the book for reading.
+    var bookData: Data?
 
     /// Whether this book is a plain-text file handled natively (no Rust engine).
     var isPlainText: Bool { metadata.format == .txt }
+
+    static func == (lhs: LibraryBook, rhs: LibraryBook) -> Bool {
+        lhs.id == rhs.id
+    }
+
+    func hash(into hasher: inout Hasher) {
+        hasher.combine(id)
+    }
 }
 
 /// Global application state.
@@ -123,7 +133,8 @@ final class AppState: ObservableObject {
                 metadata: metadata,
                 progress: 0.0,
                 coverData: nil,
-                fileURL: fileURL
+                fileURL: fileURL,
+                bookData: nil
             )
 
             // Store parsed content for later reading
@@ -160,7 +171,16 @@ final class AppState: ObservableObject {
             }
 
             let metaResult = self.engine.getMetadata()
-            // Close the book after extracting metadata (we'll reopen when reading)
+
+            // Try to extract cover image while the book is still open
+            var coverData: Data? = nil
+            if case .success(let meta) = metaResult, let coverId = meta.coverImageRef {
+                if case .success(let imgData) = self.engine.getCoverImage(coverId: coverId) {
+                    coverData = imgData
+                }
+            }
+
+            // Close the book after extracting metadata and cover
             let _ = self.engine.closeBook()
 
             switch metaResult {
@@ -169,8 +189,9 @@ final class AppState: ObservableObject {
                     id: metadata.id,
                     metadata: metadata,
                     progress: 0.0,
-                    coverData: nil,
-                    fileURL: fileURL
+                    coverData: coverData,
+                    fileURL: fileURL,
+                    bookData: data
                 )
                 DispatchQueue.main.async {
                     // Avoid duplicates
@@ -201,5 +222,26 @@ final class AppState: ObservableObject {
     func openBook(_ book: LibraryBook) {
         currentBookId = book.id
         currentDestination = .reader(bookId: book.id)
+    }
+
+    /// Reopen the EPUB file in the Rust engine for reading.
+    /// Must be called before accessing chapter content, TOC, etc.
+    func reopenEpubForReading(_ book: LibraryBook) -> Bool {
+        // Try bookData first, then fall back to fileURL
+        let data: Data?
+        if let bd = book.bookData {
+            data = bd
+        } else if let url = book.fileURL {
+            data = try? Data(contentsOf: url)
+        } else {
+            data = nil
+        }
+
+        guard let epubData = data else { return false }
+
+        if case .success = engine.openBook(data: epubData) {
+            return true
+        }
+        return false
     }
 }
