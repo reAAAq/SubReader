@@ -41,6 +41,12 @@ public protocol ReaderEngineProtocol: Sendable {
     /// Get the cover image data by manifest item id.
     func getCoverImage(coverId: String) -> Result<Data, ReaderError>
 
+    // MARK: - TXT Operations
+
+    /// Parse a TXT file from raw bytes with chapter splitting.
+    /// This is a stateless operation — no need to call openBook first.
+    func parseTxt(data: Data) -> Result<TxtParseResult, ReaderError>
+
     // MARK: - Progress
 
     /// Get reading progress for a book.

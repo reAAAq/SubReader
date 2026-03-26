@@ -210,6 +210,32 @@ public final class RustCore: ReaderEngineProtocol, @unchecked Sendable {
         }
     }
 
+    // MARK: - TXT Operations
+
+    public func parseTxt(data: Data) -> Result<TxtParseResult, ReaderError> {
+        ffiQueue.sync {
+            let start = CFAbsoluteTimeGetCurrent()
+            var outPtr: UnsafePointer<UInt8>?
+            var outLen: UInt32 = 0
+
+            let code = data.withUnsafeBytes { buffer in
+                guard let ptr = buffer.baseAddress?.assumingMemoryBound(to: UInt8.self) else {
+                    return FFI_ERR_NULL_PTR
+                }
+                return reader_parse_txt(ptr, UInt32(buffer.count), &outPtr, &outLen)
+            }
+
+            if let error = ReaderError.from(code: code) {
+                return .failure(error)
+            }
+
+            let result: Result<TxtParseResult, ReaderError> = decodeJSON(ptr: outPtr, len: outLen)
+            let elapsed = (CFAbsoluteTimeGetCurrent() - start) * 1000
+            Self.logger.debug("reader_parse_txt (\(data.count) bytes): \(elapsed, format: .fixed(precision: 2))ms")
+            return result
+        }
+    }
+
     // MARK: - Progress
 
     public func getProgress(bookId: String) -> Result<ReadingProgress, ReaderError> {

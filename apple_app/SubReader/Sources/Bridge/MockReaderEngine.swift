@@ -95,6 +95,15 @@ public final class MockReaderEngine: ReaderEngineProtocol, @unchecked Sendable {
         .failure(.notFound)
     }
 
+    public func parseTxt(data: Data) -> Result<TxtParseResult, ReaderError> {
+        let mockResult = TxtParseResult(
+            encoding: "UTF-8",
+            hadReplacements: false,
+            chapters: [TxtChapter(title: "Mock Chapter", nodes: mockChapterContent)]
+        )
+        return failOrSucceed(mockResult)
+    }
+
     public func getProgress(bookId: String) -> Result<ReadingProgress, ReaderError> {
         guard let progress = mockProgress else { return .failure(.notFound) }
         return failOrSucceed(progress)
