@@ -4,30 +4,31 @@ import SwiftUI
 
 struct SettingsView: View {
     @ObservedObject private var preferences = ReadingPreferences.shared
+    @ObservedObject private var languageManager = LanguageManager.shared
     @Environment(\.colorScheme) private var systemColorScheme
 
     var body: some View {
         TabView {
             readingTab
                 .tabItem {
-                    Label("Reading", systemImage: "book")
+                    Label(L("settings.reading"), systemImage: "book")
                 }
 
             appearanceTab
                 .tabItem {
-                    Label("Appearance", systemImage: "paintbrush")
+                    Label(L("settings.appearance"), systemImage: "paintbrush")
                 }
         }
-        .frame(width: 450, height: 350)
+        .frame(width: 450, height: 400)
     }
 
     // MARK: - Reading Tab
 
     private var readingTab: some View {
         Form {
-            Section("Font") {
-                Picker("Font Family", selection: $preferences.fontName) {
-                    Text("System Default").tag("System")
+            Section(L("settings.font")) {
+                Picker(L("settings.fontFamily"), selection: $preferences.fontName) {
+                    Text(L("settings.systemDefault")).tag("System")
                     Divider()
                     ForEach(availableFonts, id: \.self) { font in
                         Text(font).tag(font)
@@ -35,7 +36,7 @@ struct SettingsView: View {
                 }
 
                 HStack {
-                    Text("Font Size")
+                    Text(L("settings.fontSize"))
                     Spacer()
                     Slider(value: $preferences.fontSize, in: 12...36, step: 1)
                         .frame(width: 200)
@@ -45,7 +46,7 @@ struct SettingsView: View {
                 }
 
                 HStack {
-                    Text("Line Spacing")
+                    Text(L("settings.lineSpacing"))
                     Spacer()
                     Slider(value: $preferences.lineSpacing, in: 1.0...2.5, step: 0.1)
                         .frame(width: 200)
@@ -55,8 +56,8 @@ struct SettingsView: View {
                 }
             }
 
-            Section("Preview") {
-                Text("The quick brown fox jumps over the lazy dog.")
+            Section(L("settings.preview")) {
+                Text(L("settings.previewText"))
                     .font(previewFont)
                     .lineSpacing(preferences.fontSize * (preferences.lineSpacing - 1.0))
                     .padding()
@@ -74,21 +75,29 @@ struct SettingsView: View {
 
     private var appearanceTab: some View {
         Form {
-            Section("Theme") {
-                Picker("Reading Theme", selection: $preferences.themeType) {
+            Section(L("settings.theme")) {
+                Picker(L("settings.readingTheme"), selection: $preferences.themeType) {
                     ForEach(ReadingThemeType.allCases) { theme in
-                        Text(theme.rawValue).tag(theme)
+                        Text(theme.displayName).tag(theme)
                     }
                 }
                 .pickerStyle(.segmented)
 
-                Toggle("Follow System Appearance", isOn: $preferences.followSystemAppearance)
+                Toggle(L("settings.followSystemAppearance"), isOn: $preferences.followSystemAppearance)
             }
 
-            Section("Theme Preview") {
+            Section(L("settings.themePreview")) {
                 HStack(spacing: 12) {
                     ForEach(ReadingThemeType.allCases.filter { $0 != .custom }) { themeType in
                         themePreview(themeType)
+                    }
+                }
+            }
+
+            Section(L("settings.language")) {
+                Picker(L("settings.languageLabel"), selection: $languageManager.appLanguage) {
+                    ForEach(AppLanguage.allCases) { lang in
+                        Text(lang.displayName).tag(lang)
                     }
                 }
             }
@@ -117,7 +126,7 @@ struct SettingsView: View {
                         )
                 )
 
-            Text(type.rawValue)
+            Text(type.displayName)
                 .font(.caption)
         }
         .onTapGesture {
