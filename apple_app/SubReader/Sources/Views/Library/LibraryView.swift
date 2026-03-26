@@ -7,6 +7,7 @@ import ReaderBridge
 
 struct LibraryView: View {
     @EnvironmentObject var appState: AppState
+    @ObservedObject private var languageManager = LanguageManager.shared
     @AppStorage("libraryViewMode") private var viewMode: ViewMode = .grid
 
     enum ViewMode: String {
@@ -32,14 +33,14 @@ struct LibraryView: View {
                 importButton
             }
         }
-        .navigationTitle("Library")
+        .navigationTitle(L("library.title"))
         .onDrop(of: [.fileURL], isTargeted: nil) { providers in
             handleDrop(providers)
             return true
         }
         .overlay {
             if appState.isLoading {
-                ProgressView("Importing...")
+                ProgressView(L("library.importing"))
                     .padding()
                     .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
             }
@@ -53,12 +54,12 @@ struct LibraryView: View {
             Image(systemName: "book.closed")
                 .font(.system(size: 64))
                 .foregroundStyle(.secondary)
-            Text("No Books Yet")
+            Text(L("library.noBooks"))
                 .font(.title2)
                 .fontWeight(.semibold)
-            Text("Drag & drop EPUB or TXT files here to start reading")
+            Text(L("library.dragHint"))
                 .foregroundStyle(.secondary)
-            Button("Open File...") {
+            Button(L("library.openFile")) {
                 openFilePicker()
             }
             .buttonStyle(.borderedProminent)
@@ -124,7 +125,7 @@ struct LibraryView: View {
     // MARK: - Components
 
     private var viewModeToggle: some View {
-        Picker("View", selection: $viewMode) {
+        Picker(L("library.view"), selection: $viewMode) {
             Image(systemName: "square.grid.2x2")
                 .tag(ViewMode.grid)
             Image(systemName: "list.bullet")
@@ -145,11 +146,11 @@ struct LibraryView: View {
 
     @ViewBuilder
     private func bookContextMenu(_ book: LibraryBook) -> some View {
-        Button("Open") {
+        Button(L("library.open")) {
             appState.openBook(book)
         }
         Divider()
-        Button("Delete", role: .destructive) {
+        Button(L("library.delete"), role: .destructive) {
             appState.removeBook(id: book.id)
         }
     }

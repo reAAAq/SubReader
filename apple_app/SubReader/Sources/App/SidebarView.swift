@@ -6,38 +6,39 @@ import ReaderBridge
 
 struct SidebarView: View {
     @EnvironmentObject var appState: AppState
+    @ObservedObject private var languageManager = LanguageManager.shared
 
     var body: some View {
         List {
-            Section("Library") {
+            Section(L("sidebar.library")) {
                 Button {
                     appState.currentDestination = .library
                 } label: {
-                    Label("All Books", systemImage: "books.vertical")
+                    Label(L("sidebar.allBooks"), systemImage: "books.vertical")
                 }
                 .buttonStyle(.plain)
             }
 
             if appState.currentBookId != nil {
-                Section("Reading") {
+                Section(L("sidebar.reading")) {
                     Button {
                         NotificationCenter.default.post(name: .toggleTOC, object: nil)
                     } label: {
-                        Label("Table of Contents", systemImage: "list.bullet")
+                        Label(L("sidebar.toc"), systemImage: "list.bullet")
                     }
                     .buttonStyle(.plain)
 
                     Button {
                         // Show bookmarks panel
                     } label: {
-                        Label("Bookmarks", systemImage: "bookmark")
+                        Label(L("sidebar.bookmarks"), systemImage: "bookmark")
                     }
                     .buttonStyle(.plain)
 
                     Button {
                         // Show annotations panel
                     } label: {
-                        Label("Annotations", systemImage: "highlighter")
+                        Label(L("sidebar.annotations"), systemImage: "highlighter")
                     }
                     .buttonStyle(.plain)
                 }
