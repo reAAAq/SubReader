@@ -25,8 +25,12 @@ struct ReaderView: View {
 
     /// Ordered list of content document paths from the EPUB spine.
     @State private var spinePaths: [String] = []
-    /// Flattened TOC entries for display.
+    /// Tree-structured TOC entries for sidebar display.
     @State private var tocEntries: [TocEntry] = []
+    /// Flattened TOC entries for title matching.
+    @State private var flatTocEntries: [TocEntry] = []
+    /// Whether the TOC sidebar is visible.
+    @State private var showTOC: Bool = false
 
     @AppStorage("fontSize") private var fontSize: Double = 16
     @AppStorage("lineSpacing") private var lineSpacing: Double = 1.5
@@ -35,32 +39,58 @@ struct ReaderView: View {
     // Debounce progress saves
     @State private var progressSaveTask: DispatchWorkItem?
 
-    var body: some View {
-        ZStack {
-            if isLoading {
-                ProgressView(L("reader.loadingChapter"))
-            } else if let error = errorMessage {
-                VStack(spacing: 12) {
-                    Image(systemName: "exclamationmark.triangle")
-                        .font(.largeTitle)
-                        .foregroundStyle(.secondary)
-                    Text(error)
-                        .foregroundStyle(.secondary)
-                }
-            } else {
-                VStack(spacing: 0) {
-                    // Reading content
-                    AttributedTextView(
-                        attributedString: attributedContent,
-                        onScroll: handleScroll
-                    )
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+    /// Current chapter href for TOC highlighting.
+    private var currentChapterHref: String? {
+        guard currentChapterIndex < spinePaths.count else { return nil }
+        return spinePaths[currentChapterIndex]
+    }
 
-                    // Bottom progress bar
-                    progressBar
+    var body: some View {
+        HStack(spacing: 0) {
+            // TOC sidebar
+            if showTOC {
+                TOCSidebarView(
+                    tocEntries: tocEntries,
+                    currentChapterHref: currentChapterHref,
+                    onSelectChapter: { entry in
+                        handleTocSelection(entry)
+                    }
+                )
+                .frame(width: 260)
+                .transition(.move(edge: .leading))
+
+                Divider()
+            }
+
+            // Main content
+            ZStack {
+                if isLoading {
+                    ProgressView(L("reader.loadingChapter"))
+                } else if let error = errorMessage {
+                    VStack(spacing: 12) {
+                        Image(systemName: "exclamationmark.triangle")
+                            .font(.largeTitle)
+                            .foregroundStyle(.secondary)
+                        Text(error)
+                            .foregroundStyle(.secondary)
+                    }
+                } else {
+                    VStack(spacing: 0) {
+                        // Reading content
+                        AttributedTextView(
+                            attributedString: attributedContent,
+                            onScroll: handleScroll
+                        )
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+                        // Bottom progress bar
+                        progressBar
+                    }
                 }
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
+        .animation(.easeInOut(duration: 0.2), value: showTOC)
         .navigationTitle(metadata?.title ?? L("reader.reading"))
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
@@ -90,6 +120,11 @@ struct ReaderView: View {
         }
         .onDisappear {
             saveProgressAndClose()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .toggleTOC)) { _ in
+            withAnimation {
+                showTOC.toggle()
+            }
         }
         .onKeyPress(.leftArrow) {
             navigateChapter(offset: -1)
@@ -130,10 +165,10 @@ struct ReaderView: View {
         if currentChapterIndex < spinePaths.count {
             let currentPath = spinePaths[currentChapterIndex]
             // Match TOC entry by href (strip fragment)
-            if let entry = tocEntries.first(where: { href in
+            if let entry = flatTocEntries.first(where: { href in
                 let basePath = currentPath.components(separatedBy: "#").first ?? currentPath
                 let tocBase = href.href.components(separatedBy: "#").first ?? href.href
-                return basePath == tocBase
+                return basePath.hasSuffix(tocBase) || tocBase.hasSuffix(basePath)
             }) {
                 return entry.title
             }
@@ -198,7 +233,8 @@ struct ReaderView: View {
             DispatchQueue.main.async {
                 metadata = meta
                 spinePaths = spine
-                tocEntries = flatToc
+                tocEntries = toc
+                flatTocEntries = flatToc
                 progress = prog
 
                 switch contentResult {
@@ -332,5 +368,43 @@ struct ReaderView: View {
             result.append(contentsOf: flattenToc(entry.children))
         }
         return result
+    }
+
+    // MARK: - TOC Selection
+
+    private func handleTocSelection(_ entry: TocEntry) {
+        let result = container.engine.resolveTocHref(href: entry.href)
+        switch result {
+        case .success(let spineIndex):
+            guard spineIndex != currentChapterIndex else { return }
+            currentChapterIndex = spineIndex
+            isLoading = true
+
+            let chapterPath = spinePaths[spineIndex]
+            let cacheKey = "\(chapterPath)_\(Int(fontSize))_\(fontName)"
+            if let cached = container.chapterCache.get(key: cacheKey) as? NSAttributedString {
+                attributedContent = cached
+                isLoading = false
+                return
+            }
+
+            DispatchQueue.global(qos: .userInitiated).async {
+                let contentResult = appState.engine.getChapterContent(path: chapterPath)
+                DispatchQueue.main.async {
+                    switch contentResult {
+                    case .success(let nodes):
+                        chapterNodes = nodes
+                        renderContent()
+                        container.chapterCache.set(key: cacheKey, value: attributedContent)
+                    case .failure:
+                        errorMessage = L("reader.failedLoadChapterShort")
+                    }
+                    isLoading = false
+                }
+            }
+        case .failure:
+            // No matching spine entry found — ignore silently
+            break
+        }
     }
 }

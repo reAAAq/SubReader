@@ -210,6 +210,32 @@ public final class RustCore: ReaderEngineProtocol, @unchecked Sendable {
         }
     }
 
+    public func resolveTocHref(href: String) -> Result<Int, ReaderError> {
+        ffiQueue.sync {
+            let code = href.withCString { hrefCStr in
+                reader_resolve_toc_href(
+                    UnsafeRawPointer(hrefCStr).assumingMemoryBound(to: UInt8.self),
+                    UInt32(href.utf8.count)
+                )
+            }
+
+            // Negative error codes (except -1 which means "not matched")
+            if code < -1 {
+                if let error = ReaderError.from(code: code) {
+                    return .failure(error)
+                }
+                return .failure(.unknown)
+            }
+
+            // -1 means no match found
+            if code == -1 {
+                return .failure(.notFound)
+            }
+
+            return .success(Int(code))
+        }
+    }
+
     // MARK: - TXT Operations
 
     public func parseTxt(data: Data) -> Result<TxtParseResult, ReaderError> {

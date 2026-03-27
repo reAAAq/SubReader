@@ -9,17 +9,28 @@ struct TOCSidebarView: View {
     var onSelectChapter: ((TocEntry) -> Void)?
 
     var body: some View {
-        List {
-            ForEach(tocEntries) { entry in
-                TOCRowView(
-                    entry: entry,
-                    currentChapterHref: currentChapterHref,
-                    onSelectChapter: onSelectChapter
-                )
+        if tocEntries.isEmpty {
+            VStack {
+                Spacer()
+                Text("No table of contents")
+                    .foregroundStyle(.secondary)
+                    .font(.subheadline)
+                Spacer()
             }
+            .frame(minWidth: 200)
+        } else {
+            List {
+                ForEach(tocEntries) { entry in
+                    TOCRowView(
+                        entry: entry,
+                        currentChapterHref: currentChapterHref,
+                        onSelectChapter: onSelectChapter
+                    )
+                }
+            }
+            .listStyle(.sidebar)
+            .frame(minWidth: 200)
         }
-        .listStyle(.sidebar)
-        .frame(minWidth: 200)
     }
 }
 
@@ -58,7 +69,13 @@ private struct TOCRowView: View {
     }
 
     private var isCurrent: Bool {
-        currentChapterHref == entry.href
+        guard let currentHref = currentChapterHref else { return false }
+        // Strip fragment identifiers before comparing
+        let baseCurrentHref = currentHref.components(separatedBy: "#").first ?? currentHref
+        let baseEntryHref = entry.href.components(separatedBy: "#").first ?? entry.href
+        return baseCurrentHref == baseEntryHref
+            || baseCurrentHref.hasSuffix(baseEntryHref)
+            || baseEntryHref.hasSuffix(baseCurrentHref)
     }
 
     private var tocLabel: some View {

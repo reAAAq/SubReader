@@ -3,12 +3,23 @@
 //! Supports UTF-8, GBK/GB2312, UTF-16 LE/BE, Shift-JIS encoding detection
 //! and conversion. Provides streaming/chunked parsing for large files.
 
+use std::sync::LazyLock;
+
 use chardetng::EncodingDetector;
 use encoding_rs::Encoding;
+use regex::Regex;
 
 use shared_types::{DomNode, NodeType};
 
 use crate::error::ParseError;
+
+/// Pre-compiled regex for chapter heading detection.
+/// Compiled once and reused across all calls to `split_into_chapters`.
+static CHAPTER_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(
+        r"(?m)^[\s]*(?:第[一二三四五六七八九十百千零\d]+[章节回卷篇]|[Cc][Hh][Aa][Pp][Tt][Ee][Rr]\s+\d+)[\s:：.、]*(.*?)$"
+    ).unwrap()
+});
 
 /// A chapter extracted from a TXT file.
 #[derive(Debug, Clone, serde::Serialize)]
@@ -277,13 +288,7 @@ fn split_into_paragraphs(text: &str) -> Vec<&str> {
 /// Split text into chapters by detecting heading patterns.
 /// Returns a Vec of (title, content) pairs.
 fn split_into_chapters(text: &str) -> Vec<(String, String)> {
-    // Chinese chapter patterns: 第X章, 第X节, 第X回, 第X卷, 第X篇
-    // English chapter patterns: Chapter N, CHAPTER N
-    let chapter_re = regex::Regex::new(
-        r"(?m)^[\s]*(?:第[一二三四五六七八九十百千零\d]+[章节回卷篇]|[Cc][Hh][Aa][Pp][Tt][Ee][Rr]\s+\d+)[\s:：.、]*(.*?)$"
-    ).unwrap();
-
-    let matches: Vec<_> = chapter_re.find_iter(text).collect();
+    let matches: Vec<_> = CHAPTER_RE.find_iter(text).collect();
 
     if matches.len() >= 2 {
         let mut chapters = Vec::new();

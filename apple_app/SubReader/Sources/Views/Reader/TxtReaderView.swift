@@ -20,35 +20,73 @@ struct TxtReaderView: View {
     @State private var isLoading = true
     @State private var errorMessage: String?
     @State private var scrollPercentage: Double = 0
+    /// Whether the TOC sidebar is visible.
+    @State private var showTOC: Bool = false
 
     @AppStorage("fontSize") private var fontSize: Double = 16
     @AppStorage("lineSpacing") private var lineSpacing: Double = 1.5
     @AppStorage("fontName") private var fontName: String = "System"
 
-    var body: some View {
-        ZStack {
-            if isLoading {
-                ProgressView(L("reader.loading"))
-            } else if let error = errorMessage {
-                VStack(spacing: 12) {
-                    Image(systemName: "exclamationmark.triangle")
-                        .font(.largeTitle)
-                        .foregroundStyle(.secondary)
-                    Text(error)
-                        .foregroundStyle(.secondary)
-                }
-            } else {
-                VStack(spacing: 0) {
-                    AttributedTextView(
-                        attributedString: attributedContent,
-                        onScroll: { pct in scrollPercentage = pct }
-                    )
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+    /// Current chapter href for TOC highlighting (uses index as string).
+    private var currentChapterHref: String? {
+        return "\(currentChapterIndex)"
+    }
 
-                    bottomBar
+    /// Convert TxtChapters to TocEntry format for TOCSidebarView.
+    private var tocEntries: [TocEntry] {
+        guard let parseResult else { return [] }
+        return parseResult.chapters.enumerated().map { index, chapter in
+            TocEntry(title: chapter.title, href: "\(index)", level: 0, children: [])
+        }
+    }
+
+    var body: some View {
+        HStack(spacing: 0) {
+            // TOC sidebar
+            if showTOC {
+                TOCSidebarView(
+                    tocEntries: tocEntries,
+                    currentChapterHref: currentChapterHref,
+                    onSelectChapter: { entry in
+                        if let idx = Int(entry.href), idx != currentChapterIndex {
+                            currentChapterIndex = idx
+                            renderCurrentChapter()
+                        }
+                    }
+                )
+                .frame(width: 260)
+                .transition(.move(edge: .leading))
+
+                Divider()
+            }
+
+            // Main content
+            ZStack {
+                if isLoading {
+                    ProgressView(L("reader.loading"))
+                } else if let error = errorMessage {
+                    VStack(spacing: 12) {
+                        Image(systemName: "exclamationmark.triangle")
+                            .font(.largeTitle)
+                            .foregroundStyle(.secondary)
+                        Text(error)
+                            .foregroundStyle(.secondary)
+                    }
+                } else {
+                    VStack(spacing: 0) {
+                        AttributedTextView(
+                            attributedString: attributedContent,
+                            onScroll: { pct in scrollPercentage = pct }
+                        )
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+                        bottomBar
+                    }
                 }
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
+        .animation(.easeInOut(duration: 0.2), value: showTOC)
         .navigationTitle(book.metadata.title)
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
@@ -73,6 +111,11 @@ struct TxtReaderView: View {
         }
         .onAppear {
             loadContent()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .toggleTOC)) { _ in
+            withAnimation {
+                showTOC.toggle()
+            }
         }
         .onKeyPress(.leftArrow) {
             navigateChapter(offset: -1)

@@ -95,6 +95,15 @@ public final class MockReaderEngine: ReaderEngineProtocol, @unchecked Sendable {
         .failure(.notFound)
     }
 
+    public func resolveTocHref(href: String) -> Result<Int, ReaderError> {
+        if shouldFail { return .failure(.unknown) }
+        // Mock: try to find href in mockSpine
+        if let idx = mockSpine.firstIndex(where: { $0.hasSuffix(href.components(separatedBy: "#").first ?? href) }) {
+            return .success(idx)
+        }
+        return .failure(.notFound)
+    }
+
     public func parseTxt(data: Data) -> Result<TxtParseResult, ReaderError> {
         let mockResult = TxtParseResult(
             encoding: "UTF-8",

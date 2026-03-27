@@ -34,8 +34,14 @@ struct EngineState {
     current_book: Option<EpubParser>,
     /// Buffer for returning string data to the caller.
     return_buffer: String,
+    /// Buffer for returning binary data (e.g. cover images) to the caller.
+    binary_buffer: Vec<u8>,
 }
 
+// NOTE: We use Mutex instead of RwLock because EngineState contains
+// rusqlite::Connection (via StateManager), which uses RefCell internally
+// and does not implement Sync. Mutex<T> only requires T: Send, while
+// RwLock<T> requires T: Send + Sync.
 static ENGINE: Mutex<Option<EngineState>> = Mutex::new(None);
 
 // ─── Helper Functions ────────────────────────────────────────────────────────
@@ -99,6 +105,7 @@ pub unsafe extern "C" fn reader_engine_init(
                     state_manager: sm,
                     current_book: None,
                     return_buffer: String::new(),
+                    binary_buffer: Vec::new(),
                 });
                 FFI_OK
             }
@@ -412,18 +419,10 @@ pub unsafe extern "C" fn reader_get_cover_image(
 
         match parser.get_cover_image(&cover_id) {
             Ok(image_data) => {
-                // Store raw bytes in return_buffer as a String (binary-safe via Latin-1)
-                // We need a separate buffer for binary data
-                engine.return_buffer = String::new();
-                // Use a raw byte approach: store in return_buffer's backing allocation
-                // Actually, we need to store binary data. Let's use the return_buffer
-                // by converting to a string that preserves bytes.
-                // Better approach: store the Vec<u8> directly and return pointer to it.
+                // Store binary data in a dedicated buffer to avoid UB.
                 let len = image_data.len() as u32;
-                // We'll store the image data as the return_buffer's bytes
-                // Since return_buffer is a String, we use unsafe to store arbitrary bytes
-                engine.return_buffer = unsafe { String::from_utf8_unchecked(image_data) };
-                let ptr = engine.return_buffer.as_ptr();
+                engine.binary_buffer = image_data;
+                let ptr = engine.binary_buffer.as_ptr();
                 unsafe {
                     *out_ptr = ptr;
                     *out_len = len;
@@ -431,6 +430,44 @@ pub unsafe extern "C" fn reader_get_cover_image(
                 FFI_OK
             }
             Err(_) => FFI_ERR_NOT_FOUND,
+        }
+    })
+    .unwrap_or(FFI_ERR_PANIC)
+}
+
+/// Resolve a TOC entry href to a spine index.
+///
+/// Returns the 0-based spine index (>= 0) on success, -1 if no match,
+/// or a negative FFI error code on failure.
+///
+/// # Safety
+/// `href_ptr` must point to valid UTF-8 bytes of length `href_len`.
+#[no_mangle]
+pub unsafe extern "C" fn reader_resolve_toc_href(href_ptr: *const u8, href_len: u32) -> i32 {
+    catch_unwind(|| {
+        let href = match unsafe { ptr_to_str(href_ptr, href_len) } {
+            Ok(s) => s.to_string(),
+            Err(code) => return code,
+        };
+
+        let mut guard = match ENGINE.lock() {
+            Ok(g) => g,
+            Err(_) => return FFI_ERR_UNKNOWN,
+        };
+
+        let engine = match guard.as_mut() {
+            Some(e) => e,
+            None => return FFI_ERR_NOT_INIT,
+        };
+
+        let parser = match engine.current_book.as_mut() {
+            Some(p) => p,
+            None => return FFI_ERR_NOT_FOUND,
+        };
+
+        match parser.resolve_toc_href(&href) {
+            Ok(idx) => idx,
+            Err(_) => FFI_ERR_PARSE_FAILED,
         }
     })
     .unwrap_or(FFI_ERR_PANIC)
@@ -836,7 +873,7 @@ mod tests {
     // ffi_c tests share a global ENGINE, so we must serialize them.
     // Use a global test mutex to prevent concurrent access.
     // We handle PoisonError to prevent cascading failures.
-    static TEST_LOCK: Mutex<()> = Mutex::new(());
+    static TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
     /// Helper: acquire test lock, handling poison errors.
     fn acquire_lock() -> std::sync::MutexGuard<'static, ()> {
@@ -1493,6 +1530,67 @@ let (_dir, db_path) = temp_db_path();
             )
         };
         assert_eq!(result, FFI_ERR_NULL_PTR);
+
+        unsafe { reader_engine_destroy() };
+    }
+
+    // ─── resolve_toc_href FFI Tests ──────────────────────────────────────────
+
+    #[test]
+    fn test_resolve_toc_href_no_book() {
+        let _lock = acquire_lock();
+        reset_engine();
+        let (_dir, db_path) = temp_db_path();
+        init_engine_with_path(&db_path);
+
+        let href = b"chapter01.xhtml";
+        let result = unsafe {
+            reader_resolve_toc_href(href.as_ptr(), href.len() as u32)
+        };
+        assert_eq!(result, FFI_ERR_NOT_FOUND);
+
+        unsafe { reader_engine_destroy() };
+    }
+
+    #[test]
+    fn test_resolve_toc_href_null_ptr() {
+        let _lock = acquire_lock();
+        reset_engine();
+        let (_dir, db_path) = temp_db_path();
+        init_engine_with_path(&db_path);
+
+        let result = unsafe {
+            reader_resolve_toc_href(std::ptr::null(), 0)
+        };
+        assert_eq!(result, FFI_ERR_NULL_PTR);
+
+        unsafe { reader_engine_destroy() };
+    }
+
+    #[test]
+    fn test_resolve_toc_href_not_init() {
+        let _lock = acquire_lock();
+        reset_engine();
+
+        let href = b"chapter01.xhtml";
+        let result = unsafe {
+            reader_resolve_toc_href(href.as_ptr(), href.len() as u32)
+        };
+        assert_eq!(result, FFI_ERR_NOT_INIT);
+    }
+
+    #[test]
+    fn test_resolve_toc_href_invalid_utf8() {
+        let _lock = acquire_lock();
+        reset_engine();
+        let (_dir, db_path) = temp_db_path();
+        init_engine_with_path(&db_path);
+
+        let invalid_bytes: &[u8] = &[0xFF, 0xFE, 0xFD];
+        let result = unsafe {
+            reader_resolve_toc_href(invalid_bytes.as_ptr(), invalid_bytes.len() as u32)
+        };
+        assert_eq!(result, FFI_ERR_INVALID_UTF8);
 
         unsafe { reader_engine_destroy() };
     }
