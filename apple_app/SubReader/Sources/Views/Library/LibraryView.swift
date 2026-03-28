@@ -1,4 +1,4 @@
-// LibraryView — Book library with grid/list layout, import, and management.
+// LibraryView — Book library with Apple Books-style grid layout, import, and management.
 
 import SwiftUI
 import UniformTypeIdentifiers
@@ -8,32 +8,22 @@ import ReaderBridge
 struct LibraryView: View {
     @EnvironmentObject var appState: AppState
     @ObservedObject private var languageManager = LanguageManager.shared
-    @AppStorage("libraryViewMode") private var viewMode: ViewMode = .grid
-
-    enum ViewMode: String {
-        case grid, list
-    }
 
     var body: some View {
         Group {
             if appState.libraryBooks.isEmpty {
                 emptyStateView
             } else {
-                switch viewMode {
-                case .grid:
-                    gridView
-                case .list:
-                    listView
-                }
+                gridView
             }
         }
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
-                viewModeToggle
                 importButton
             }
         }
-        .navigationTitle(L("library.title"))
+        .toolbarBackground(.hidden, for: .windowToolbar)
+        .navigationTitle("")
         .onDrop(of: [.fileURL], isTargeted: nil) { providers in
             handleDrop(providers)
             return true
@@ -67,79 +57,66 @@ struct LibraryView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
-    // MARK: - Grid View
+    // MARK: - Grid View (Apple Books Style)
 
     private var gridView: some View {
         ScrollView {
-            LazyVGrid(
-                columns: [GridItem(.adaptive(minimum: 160, maximum: 200), spacing: 20)],
-                spacing: 20
-            ) {
-                ForEach(appState.libraryBooks) { book in
-                    BookCardView(book: book)
-                        .onTapGesture(count: 2) {
-                            appState.openBook(book)
-                        }
-                        .contextMenu {
-                            bookContextMenu(book)
-                        }
+            VStack(alignment: .leading, spacing: 0) {
+                // Large title header
+                VStack(alignment: .leading, spacing: 16) {
+                    Text(L("library.title"))
+                        .font(.largeTitle)
+                        .fontWeight(.bold)
+                        .padding(.horizontal, 24)
+                        .padding(.top, 20)
+                    
+                    Divider()
+                        .padding(.horizontal, 24)
                 }
-            }
-            .padding()
-        }
-    }
+                .padding(.bottom, 24)
 
-    // MARK: - List View
+                // Book grid
+                LazyVGrid(
+                    columns: Array(
+                        repeating: GridItem(.flexible(), spacing: 32, alignment: .top),
+                        count: 4
+                    ),
+                    spacing: 48
+                ) {
+                    ForEach(appState.filteredBooks) { book in
+                        BookCardView(book: book)
+                            .frame(maxWidth: .infinity)
+                            .onTapGesture(count: 2) {
+                                appState.openBook(book)
+                            }
+                            .contextMenu {
+                                bookContextMenu(book)
+                            }
+                    }
+                }
+                .padding(.horizontal, 40)
 
-    private var listView: some View {
-        List(appState.libraryBooks) { book in
-            HStack(spacing: 12) {
-                bookCoverThumbnail(book)
-                    .frame(width: 40, height: 56)
-
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(book.metadata.title)
-                        .font(.headline)
-                        .lineLimit(1)
-                    Text(book.metadata.authors.joined(separator: ", "))
-                        .font(.subheadline)
+                // Bottom status bar
+                HStack {
+                    Spacer()
+                    Text(L("library.bookCount", appState.filteredBooks.count))
+                        .font(.caption)
                         .foregroundStyle(.secondary)
-                        .lineLimit(1)
+                    Spacer()
                 }
-
-                Spacer()
-
-                ProgressView(value: book.progress, total: 100)
-                    .frame(width: 80)
-            }
-            .padding(.vertical, 4)
-            .onTapGesture(count: 2) {
-                appState.openBook(book)
-            }
-            .contextMenu {
-                bookContextMenu(book)
+                .padding(.horizontal, 24)
+                .padding(.vertical, 16)
             }
         }
     }
 
     // MARK: - Components
 
-    private var viewModeToggle: some View {
-        Picker(L("library.view"), selection: $viewMode) {
-            Image(systemName: "square.grid.2x2")
-                .tag(ViewMode.grid)
-            Image(systemName: "list.bullet")
-                .tag(ViewMode.list)
-        }
-        .pickerStyle(.segmented)
-        .frame(width: 80)
-    }
-
     private var importButton: some View {
         Button {
             openFilePicker()
         } label: {
-            Image(systemName: "plus")
+            Image(systemName: "ellipsis.circle")
         }
         .keyboardShortcut("o", modifiers: .command)
     }
@@ -152,23 +129,6 @@ struct LibraryView: View {
         Divider()
         Button(L("library.delete"), role: .destructive) {
             appState.removeBook(id: book.id)
-        }
-    }
-
-    @ViewBuilder
-    private func bookCoverThumbnail(_ book: LibraryBook) -> some View {
-        if let coverData = book.coverData, let nsImage = NSImage(data: coverData) {
-            Image(nsImage: nsImage)
-                .resizable()
-                .aspectRatio(contentMode: .fill)
-                .clipShape(RoundedRectangle(cornerRadius: 4))
-        } else {
-            RoundedRectangle(cornerRadius: 4)
-                .fill(.quaternary)
-                .overlay {
-                    Image(systemName: "book.closed")
-                        .foregroundStyle(.secondary)
-                }
         }
     }
 
@@ -185,9 +145,7 @@ struct LibraryView: View {
 
         if panel.runModal() == .OK {
             for url in panel.urls {
-                if let data = try? Data(contentsOf: url) {
-                    appState.importBook(data: data, fileURL: url)
-                }
+                appState.importBook(from: url)
             }
         }
     }
@@ -199,77 +157,150 @@ struct LibraryView: View {
                       let url = URL(dataRepresentation: data, relativeTo: nil),
                       AppState.isSupportedFile(url) else { return }
 
-                if let fileData = try? Data(contentsOf: url) {
-                    DispatchQueue.main.async {
-                        appState.importBook(data: fileData, fileURL: url)
-                    }
+                DispatchQueue.main.async {
+                    appState.importBook(from: url)
                 }
             }
         }
     }
 }
 
-// MARK: - Book Card View
+// MARK: - Book Card View (Apple Books Style)
 
 struct BookCardView: View {
     let book: LibraryBook
+    @EnvironmentObject var appState: AppState
+
+    private let coverWidth: CGFloat = 160
+    private let coverAspectRatio: CGFloat = 2.0 / 3.0
 
     var body: some View {
-        VStack(spacing: 8) {
+        VStack(alignment: .leading, spacing: 6) {
             // Cover
-            Group {
-                if let coverData = book.coverData, let nsImage = NSImage(data: coverData) {
-                    Image(nsImage: nsImage)
-                        .resizable()
-                        .aspectRatio(2/3, contentMode: .fill)
-                } else {
-                    RoundedRectangle(cornerRadius: 8)
-                        .fill(
-                            LinearGradient(
-                                colors: [.blue.opacity(0.3), .purple.opacity(0.3)],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            )
-                        )
-                        .aspectRatio(2/3, contentMode: .fill)
-                        .overlay {
-                            VStack {
-                                Image(systemName: "book.closed")
-                                    .font(.largeTitle)
-                                    .foregroundStyle(.secondary)
-                                Text(book.metadata.title)
-                                    .font(.caption)
-                                    .multilineTextAlignment(.center)
-                                    .foregroundStyle(.secondary)
-                                    .padding(.horizontal, 8)
-                            }
-                        }
+            ZStack(alignment: .leading) {
+                Group {
+                    if let coverData = book.coverData, let nsImage = NSImage(data: coverData) {
+                        // Real cover image
+                        Image(nsImage: nsImage)
+                            .resizable()
+                            .aspectRatio(coverAspectRatio, contentMode: .fill)
+                    } else {
+                        // Generated cover (Apple Books style)
+                        generatedCover
+                    }
                 }
+                .clipShape(RoundedRectangle(cornerRadius: 4))
+
+                // Spine shadow line on the left edge
+                Rectangle()
+                    .fill(
+                        LinearGradient(
+                            colors: [
+                                .black.opacity(0.4),
+                                .black.opacity(0.15),
+                                .clear
+                            ],
+                            startPoint: .leading,
+                            endPoint: .trailing
+                        )
+                    )
+                    .frame(width: 6)
+                    .clipShape(RoundedRectangle(cornerRadius: 4))
             }
-            .clipShape(RoundedRectangle(cornerRadius: 8))
-            .shadow(color: .black.opacity(0.15), radius: 4, y: 2)
+            .shadow(color: .black.opacity(0.3), radius: 6, x: 3, y: 4)
+            .shadow(color: .black.opacity(0.1), radius: 2, x: 1, y: 1)
 
-            // Title & Author
-            VStack(spacing: 2) {
-                Text(book.metadata.title)
-                    .font(.caption)
-                    .fontWeight(.medium)
-                    .lineLimit(2)
-                    .multilineTextAlignment(.center)
+            // Info row below cover: progress/new label + more button
+            HStack(alignment: .center) {
+                if book.progress == 0 {
+                    // "New" badge
+                    Text(L("library.new"))
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 3)
+                        .background(Color.blue, in: Capsule())
+                } else {
+                    // Progress percentage
+                    Text("\(Int(book.progress))%")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
 
-                Text(book.metadata.authors.joined(separator: ", "))
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-            }
+                Spacer()
 
-            // Progress bar
-            if book.progress > 0 {
-                ProgressView(value: book.progress, total: 100)
-                    .tint(.accentColor)
+                // More button (•••)
+                Menu {
+                    Button(L("library.open")) {
+                        appState.openBook(book)
+                    }
+                    Divider()
+                    Button(L("library.delete"), role: .destructive) {
+                        appState.removeBook(id: book.id)
+                    }
+                } label: {
+                    Image(systemName: "ellipsis")
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                        .frame(width: 20, height: 20)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
             }
         }
-        .frame(width: 160)
-        .padding(8)
+        .frame(width: coverWidth)
+    }
+
+    // MARK: - Generated Cover (Apple Books Style)
+
+    private var generatedCover: some View {
+        RoundedRectangle(cornerRadius: 4)
+            .fill(
+                LinearGradient(
+                    colors: [
+                        Color(red: 0.35, green: 0.35, blue: 0.35), // Lighter gray
+                        Color(red: 0.15, green: 0.15, blue: 0.15)  // Darker gray
+                    ],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+            )
+            .aspectRatio(coverAspectRatio, contentMode: .fill)
+            .overlay {
+                // Inner border
+                RoundedRectangle(cornerRadius: 4)
+                    .strokeBorder(.white.opacity(0.15), lineWidth: 0.5)
+            }
+            .overlay {
+                VStack(spacing: 0) {
+                    Spacer()
+                        .frame(maxHeight: .infinity)
+
+                    // Book title at upper 1/3
+                    Text(book.metadata.title)
+                        .font(.system(size: 22, weight: .bold))
+                        .foregroundColor(.white)
+                        .multilineTextAlignment(.center)
+                        .lineLimit(3)
+                        .padding(.horizontal, 16)
+
+                    Spacer()
+                        .frame(maxHeight: .infinity)
+                    Spacer()
+                        .frame(maxHeight: .infinity)
+
+                    // Author name at lower 1/4
+                    Text(book.metadata.authors.joined(separator: ", "))
+                        .font(.system(size: 13))
+                        .foregroundColor(.white.opacity(0.6))
+                        .multilineTextAlignment(.center)
+                        .lineLimit(2)
+                        .padding(.horizontal, 16)
+
+                    Spacer()
+                        .frame(maxHeight: .infinity)
+                }
+                .padding(.vertical, 12)
+            }
     }
 }

@@ -7,6 +7,7 @@
 "sidebar.toc" = "目录";
 "sidebar.bookmarks" = "书签";
 "sidebar.annotations" = "批注";
+"sidebar.search" = "搜索";
 
 // MARK: - Library
 "library.title" = "书库";
@@ -17,6 +18,8 @@
 "library.dragHint" = "拖放 EPUB 或 TXT 文件到此处开始阅读";
 "library.importing" = "正在导入...";
 "library.view" = "视图";
+"library.bookCount" = "%d 本书";
+"library.new" = "新增";
 
 // MARK: - Reader
 "reader.reading" = "阅读中";
@@ -30,6 +33,21 @@
 "reader.failedLoadChapter" = "无法加载章节内容";
 "reader.failedLoadChapterShort" = "无法加载章节";
 "reader.failedLoadTxt" = "无法加载文本文件，文件可能已被移动或删除。";
+"reader.backToLibrary" = "书库";
+"reader.pageUnit" = "页";
+"reader.chapterRemaining" = "本章还剩 %d 页";
+"reader.fontSize" = "大小";
+"reader.display" = "显示";
+"reader.layout" = "版式";
+"reader.layoutAutomatic" = "自动";
+"reader.layoutSingle" = "单页";
+"reader.layoutDual" = "双页";
+"reader.search" = "搜索";
+"reader.searchPlaceholder" = "搜索当前章节";
+"reader.noSearchResults" = "没有匹配结果";
+"reader.bookmarksAndAnnotations" = "书签与批注";
+"reader.retry" = "重试";
+"reader.returnToLibrary" = "返回书库";
 
 // MARK: - Bookmarks
 "bookmarks.title" = "书签";
@@ -76,6 +94,8 @@
 // MARK: - Commands
 "commands.openFile" = "打开文件...";
 "commands.toggleSidebar" = "切换侧边栏";
+"commands.readerSearch" = "搜索当前章节";
+"commands.readerDisplay" = "显示阅读设置";
 "commands.bookmarkCurrentPage" = "为当前页面添加书签";
 
 // MARK: - Errors

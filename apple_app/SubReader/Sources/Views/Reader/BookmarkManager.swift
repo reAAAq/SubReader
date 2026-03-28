@@ -15,6 +15,8 @@ final class BookmarkManager: ObservableObject {
 
     private let engine: any ReaderEngineProtocol
     private let bookId: String
+    private var hasLoadedBookmarks = false
+    private var isLoadingBookmarks = false
 
     init(engine: any ReaderEngineProtocol, bookId: String) {
         self.engine = engine
@@ -66,11 +68,16 @@ final class BookmarkManager: ObservableObject {
     }
 
     /// Reload bookmarks from engine.
-    func loadBookmarks() {
+    func loadBookmarks(force: Bool = false) {
+        guard force || (!hasLoadedBookmarks && !isLoadingBookmarks) else { return }
+        isLoadingBookmarks = true
+        defer { isLoadingBookmarks = false }
+
         let result = engine.listBookmarks(bookId: bookId)
         if case .success(let list) = result {
             bookmarks = list
             bookmarkedPositions = Set(list.map(\.cfiPosition))
+            hasLoadedBookmarks = true
         }
     }
 }

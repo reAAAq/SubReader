@@ -3,6 +3,15 @@
 import SwiftUI
 import Combine
 
+/// Persisted page layout preference for the reader.
+enum ReaderPageLayoutMode: String, CaseIterable, Identifiable {
+    case automatic
+    case single
+    case dual
+
+    var id: String { rawValue }
+}
+
 /// Observable reading preferences that trigger re-renders on change.
 final class ReadingPreferences: ObservableObject {
 
@@ -28,13 +37,22 @@ final class ReadingPreferences: ObservableObject {
         willSet { objectWillChange.send() }
     }
 
+    @AppStorage("pageLayoutMode") private var pageLayoutModeRawValue: String = ReaderPageLayoutMode.automatic.rawValue {
+        willSet { objectWillChange.send() }
+    }
+
     // MARK: - Computed
 
     var currentTheme: ReadingTheme {
         ReadingTheme.from(themeType)
     }
 
-    /// Hash for cache invalidation when preferences change.
+    var pageLayoutMode: ReaderPageLayoutMode {
+        get { ReaderPageLayoutMode(rawValue: pageLayoutModeRawValue) ?? .automatic }
+        set { pageLayoutModeRawValue = newValue.rawValue }
+    }
+
+    /// Hash for cache invalidation when text appearance changes.
     var themeHash: Int {
         var hasher = Hasher()
         hasher.combine(fontSize)

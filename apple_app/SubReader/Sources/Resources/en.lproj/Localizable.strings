@@ -7,6 +7,7 @@
 "sidebar.toc" = "Table of Contents";
 "sidebar.bookmarks" = "Bookmarks";
 "sidebar.annotations" = "Annotations";
+"sidebar.search" = "Search";
 
 // MARK: - Library
 "library.title" = "Library";
@@ -17,6 +18,8 @@
 "library.dragHint" = "Drag & drop EPUB or TXT files here to start reading";
 "library.importing" = "Importing...";
 "library.view" = "View";
+"library.bookCount" = "%d Books";
+"library.new" = "New";
 
 // MARK: - Reader
 "reader.reading" = "Reading";
@@ -30,6 +33,21 @@
 "reader.failedLoadChapter" = "Failed to load chapter content";
 "reader.failedLoadChapterShort" = "Failed to load chapter";
 "reader.failedLoadTxt" = "Failed to load text file. The file may have been moved or deleted.";
+"reader.backToLibrary" = "Library";
+"reader.pageUnit" = " pages";
+"reader.chapterRemaining" = "%d pages left in chapter";
+"reader.fontSize" = "Size";
+"reader.display" = "Display";
+"reader.layout" = "Layout";
+"reader.layoutAutomatic" = "Auto";
+"reader.layoutSingle" = "Single";
+"reader.layoutDual" = "Dual";
+"reader.search" = "Search";
+"reader.searchPlaceholder" = "Search this chapter";
+"reader.noSearchResults" = "No results found";
+"reader.bookmarksAndAnnotations" = "Bookmarks & Annotations";
+"reader.retry" = "Try Again";
+"reader.returnToLibrary" = "Return to Library";
 
 // MARK: - Bookmarks
 "bookmarks.title" = "Bookmarks";
@@ -76,6 +94,8 @@
 // MARK: - Commands
 "commands.openFile" = "Open File...";
 "commands.toggleSidebar" = "Toggle Sidebar";
+"commands.readerSearch" = "Search Chapter";
+"commands.readerDisplay" = "Show Display Controls";
 "commands.bookmarkCurrentPage" = "Bookmark Current Page";
 
 // MARK: - Errors

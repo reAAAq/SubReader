@@ -41,6 +41,7 @@ struct SubReaderApp: App {
                 .environmentObject(container)
                 .environmentObject(languageManager)
         }
+        .windowToolbarStyle(.unifiedCompact)
         .commands {
             AppCommands(appState: appState)
         }

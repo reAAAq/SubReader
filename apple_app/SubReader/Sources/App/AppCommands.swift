@@ -20,9 +20,23 @@ struct AppCommands: Commands {
         // View menu
         CommandGroup(after: .sidebar) {
             Button(L("commands.toggleSidebar")) {
-                appState.isSidebarVisible.toggle()
+                appState.toggleSidebar()
             }
             .keyboardShortcut("t", modifiers: .command)
+
+            Divider()
+
+            Button(L("commands.readerSearch")) {
+                NotificationCenter.default.post(name: .toggleReaderSearch, object: nil)
+            }
+            .keyboardShortcut("f", modifiers: .command)
+            .disabled(!appState.isReaderActive)
+
+            Button(L("commands.readerDisplay")) {
+                NotificationCenter.default.post(name: .toggleReaderDisplay, object: nil)
+            }
+            .keyboardShortcut("d", modifiers: [.command, .shift])
+            .disabled(!appState.isReaderActive)
 
             Divider()
 
@@ -30,6 +44,7 @@ struct AppCommands: Commands {
                 NotificationCenter.default.post(name: .addBookmark, object: nil)
             }
             .keyboardShortcut("b", modifiers: .command)
+            .disabled(!appState.isReaderActive)
         }
     }
 
@@ -43,9 +58,7 @@ struct AppCommands: Commands {
         panel.canChooseDirectories = false
 
         if panel.runModal() == .OK, let url = panel.url {
-            if let data = try? Data(contentsOf: url) {
-                appState.importBook(data: data, fileURL: url)
-            }
+            appState.importBook(from: url)
         }
     }
 }
@@ -55,4 +68,6 @@ struct AppCommands: Commands {
 extension Notification.Name {
     static let addBookmark = Notification.Name("com.subreader.addBookmark")
     static let toggleTOC = Notification.Name("com.subreader.toggleTOC")
+    static let toggleReaderSearch = Notification.Name("com.subreader.toggleReaderSearch")
+    static let toggleReaderDisplay = Notification.Name("com.subreader.toggleReaderDisplay")
 }

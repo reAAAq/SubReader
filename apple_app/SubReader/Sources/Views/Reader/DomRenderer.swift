@@ -22,8 +22,22 @@ struct DomRenderer: DomRendererProtocol {
     let fontSize: Double
     let lineSpacing: Double
     let fontName: String
+    /// Text color for body text. Defaults to labelColor if not specified.
+    let textColor: NSColor
 
     // MARK: - Computed Styles
+
+    init(
+        fontSize: Double,
+        lineSpacing: Double,
+        fontName: String,
+        textColor: NSColor = .labelColor
+    ) {
+        self.fontSize = fontSize
+        self.lineSpacing = lineSpacing
+        self.fontName = fontName
+        self.textColor = textColor
+    }
 
     private var bodyFont: NSFont {
         if fontName == "System" || fontName.isEmpty {
@@ -124,7 +138,7 @@ struct DomRenderer: DomRendererProtocol {
         let attrs: [NSAttributedString.Key: Any] = [
             .font: font,
             .paragraphStyle: style,
-            .foregroundColor: NSColor.labelColor,
+            .foregroundColor: textColor,
         ]
 
         let result = NSMutableAttributedString()
@@ -141,9 +155,8 @@ struct DomRenderer: DomRendererProtocol {
         let attrs: [NSAttributedString.Key: Any] = [
             .font: bodyFont,
             .paragraphStyle: bodyParagraphStyle,
-            .foregroundColor: NSColor.labelColor,
+            .foregroundColor: textColor,
         ]
-
         let result = NSMutableAttributedString()
         let childText = renderChildren(node.children)
         result.append(childText)
@@ -158,10 +171,9 @@ struct DomRenderer: DomRendererProtocol {
         let text = node.text ?? ""
         return NSAttributedString(string: text, attributes: [
             .font: bodyFont,
-            .foregroundColor: NSColor.labelColor,
+            .foregroundColor: textColor,
         ])
     }
-
     // MARK: - Image
 
     private func renderImage(_ node: DomNode) -> NSAttributedString {
@@ -214,14 +226,13 @@ struct DomRenderer: DomRendererProtocol {
         let attrs: [NSAttributedString.Key: Any] = [
             .font: codeFont,
             .backgroundColor: NSColor.quaternaryLabelColor,
-            .foregroundColor: NSColor.labelColor,
+            .foregroundColor: textColor,
         ]
         result.addAttributes(attrs, range: NSRange(location: 0, length: result.length))
         return result
     }
 
     // MARK: - Block Quote
-
     private func renderBlockQuote(_ node: DomNode) -> NSAttributedString {
         let style = NSMutableParagraphStyle()
         style.headIndent = 24
@@ -235,7 +246,7 @@ struct DomRenderer: DomRendererProtocol {
         let attrs: [NSAttributedString.Key: Any] = [
             .font: NSFont(descriptor: bodyFont.fontDescriptor, size: fontSize) ?? bodyFont,
             .paragraphStyle: style,
-            .foregroundColor: NSColor.secondaryLabelColor,
+            .foregroundColor: textColor.withAlphaComponent(0.7),
         ]
         result.addAttributes(attrs, range: NSRange(location: 0, length: result.length))
         result.append(NSAttributedString(string: "\n"))

@@ -12,9 +12,11 @@ import ReaderBridge
 final class TxtContentStore: @unchecked Sendable {
 
     static let shared = TxtContentStore()
+    private let maxCachedBooks = 4
 
     private let queue = DispatchQueue(label: "com.subreader.txt-store", attributes: .concurrent)
     private var storage: [String: TxtParseResult] = [:]
+    private var accessOrder: [String] = []
 
     private init() {}
 
@@ -22,22 +24,37 @@ final class TxtContentStore: @unchecked Sendable {
 
     /// Store a pre-parsed TXT result for a book.
     func store(bookId: String, result: TxtParseResult) {
-        queue.async(flags: .barrier) {
+        queue.sync(flags: .barrier) {
             self.storage[bookId] = result
+            self.touchLocked(bookId: bookId)
+            self.trimToLimitLocked()
         }
     }
 
     /// Retrieve the parsed TXT result.
     func get(bookId: String) -> TxtParseResult? {
-        queue.sync {
+        let result = queue.sync {
             storage[bookId]
         }
+        guard let result else { return nil }
+        queue.async(flags: .barrier) {
+            self.touchLocked(bookId: bookId)
+        }
+        return result
     }
 
     /// Remove stored content for a book.
     func remove(bookId: String) {
-        queue.async(flags: .barrier) {
+        queue.sync(flags: .barrier) {
             self.storage.removeValue(forKey: bookId)
+            self.accessOrder.removeAll { $0 == bookId }
+        }
+    }
+
+    func clear() {
+        queue.sync(flags: .barrier) {
+            self.storage.removeAll()
+            self.accessOrder.removeAll()
         }
     }
 
@@ -48,7 +65,7 @@ final class TxtContentStore: @unchecked Sendable {
             return existing
         }
         guard let url = fileURL,
-              let data = try? Data(contentsOf: url) else { return nil }
+              let data = try? Data(contentsOf: url, options: [.mappedIfSafe]) else { return nil }
 
         switch engine.parseTxt(data: data) {
         case .success(let result):
@@ -56,6 +73,18 @@ final class TxtContentStore: @unchecked Sendable {
             return result
         case .failure:
             return nil
+        }
+    }
+
+    private func touchLocked(bookId: String) {
+        accessOrder.removeAll { $0 == bookId }
+        accessOrder.append(bookId)
+    }
+
+    private func trimToLimitLocked() {
+        while storage.count > maxCachedBooks, let evictedBookId = accessOrder.first {
+            accessOrder.removeFirst()
+            storage.removeValue(forKey: evictedBookId)
         }
     }
 }

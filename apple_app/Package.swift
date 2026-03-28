@@ -71,5 +71,10 @@ let package = Package(
             dependencies: ["ReaderBridge", "ReaderModels"],
             path: "SubReader/Tests/PerformanceTests"
         ),
+        .testTarget(
+            name: "AppTests",
+            dependencies: ["SubReader", "ReaderBridge", "ReaderModels"],
+            path: "SubReader/Tests/AppTests"
+        ),
     ]
 )

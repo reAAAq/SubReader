@@ -12,6 +12,8 @@ final class AnnotationManager: ObservableObject {
 
     private let engine: any ReaderEngineProtocol
     private let bookId: String
+    private var hasLoadedAnnotations = false
+    private var isLoadingAnnotations = false
 
     init(engine: any ReaderEngineProtocol, bookId: String) {
         self.engine = engine
@@ -55,10 +57,15 @@ final class AnnotationManager: ObservableObject {
     }
 
     /// Reload annotations from engine.
-    func loadAnnotations() {
+    func loadAnnotations(force: Bool = false) {
+        guard force || (!hasLoadedAnnotations && !isLoadingAnnotations) else { return }
+        isLoadingAnnotations = true
+        defer { isLoadingAnnotations = false }
+
         let result = engine.listAnnotations(bookId: bookId)
         if case .success(let list) = result {
             annotations = list
+            hasLoadedAnnotations = true
         }
     }
 }
