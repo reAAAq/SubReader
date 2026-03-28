@@ -73,8 +73,6 @@ struct ReaderToolbarModifier: ViewModifier {
     func body(content: Content) -> some View {
         content
             .toolbar {
-                // ── Leading: TOC, dual-page view, layout, collections ──
-                // Matches Apple Books: 4 icons right after the traffic lights.
                 ToolbarItemGroup(placement: .navigation) {
                     Button {
                         withAnimation(.easeInOut(duration: 0.2)) {
@@ -85,7 +83,6 @@ struct ReaderToolbarModifier: ViewModifier {
                     }
                     .help(L("sidebar.toc"))
 
-                    // Quick toggle: single ↔ dual page view
                     Button {
                         withAnimation(.easeInOut(duration: 0.15)) {
                             preferences.pageLayoutMode = preferences.pageLayoutMode == .dual ? .single : .dual
@@ -121,7 +118,6 @@ struct ReaderToolbarModifier: ViewModifier {
                     }
                 }
 
-                // ── Center: book title only (Apple Books style) ──
                 ToolbarItem(placement: .principal) {
                     Text(config.bookTitle)
                         .font(.system(size: 13, weight: .medium))
@@ -129,7 +125,6 @@ struct ReaderToolbarModifier: ViewModifier {
                         .frame(maxWidth: 400)
                 }
 
-                // ── Trailing: font size, search, bookmark ──
                 ToolbarItemGroup(placement: .primaryAction) {
                     Button {
                         toggleDisplayPopover()
@@ -159,7 +154,7 @@ struct ReaderToolbarModifier: ViewModifier {
                     .help(L("commands.bookmarkCurrentPage"))
                 }
             }
-            .toolbarBackground(.automatic, for: .windowToolbar)
+            .toolbarBackground(.hidden, for: .windowToolbar)
             .onKeyPress(.escape) {
                 if dismissVisiblePopover() {
                     return .handled

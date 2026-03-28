@@ -98,7 +98,6 @@ struct PaginatedReaderView: View {
             ZStack {
                 // Background
                 Color(nsColor: bgNSColor)
-                    .ignoresSafeArea()
 
                 // Page content with transition animation
                 if pages.isEmpty {
