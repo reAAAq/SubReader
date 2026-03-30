@@ -14,6 +14,17 @@
 # macOS
 .DS_Store
 
+# Environment configuration (contains secrets)
+.env
+
+# Runtime database files
+*.db
+*.db-shm
+*.db-wal
+
+# File storage directory (runtime data)
+storage/
+
 # IDE
 .idea/
 .vscode/
@@ -38,4 +49,3 @@ apple_app/SubReader/Vendor/*.h
 *.xcuserstate
 
 .codebuddy/
-.md
