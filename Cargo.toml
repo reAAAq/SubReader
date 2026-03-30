@@ -57,6 +57,9 @@ wasm-bindgen-test = "0.3"
 tokio = { version = "1.0", features = ["full"] }
 axum = "0.7"
 
+# HTTP client
+reqwest = { version = "0.12", features = ["json", "stream"] }
+
 # Logging
 tracing = "0.1"
 
