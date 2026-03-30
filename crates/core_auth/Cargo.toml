@@ -6,4 +6,10 @@ edition.workspace = true
 [dependencies]
 shared_types = { workspace = true }
 serde = { workspace = true }
+serde_json = { workspace = true }
 thiserror = { workspace = true }
+tokio = { workspace = true }
+reqwest = { workspace = true }
+tracing = { workspace = true }
+chrono = { workspace = true }
+core_sync = { workspace = true }

@@ -60,6 +60,9 @@ axum = "0.7"
 # HTTP client
 reqwest = { version = "0.12", features = ["json", "stream"] }
 
+# Date/time
+chrono = { version = "0.4", features = ["serde"] }
+
 # Logging
 tracing = "0.1"
 
