@@ -541,6 +541,8 @@ name = "ffi_c"
 version = "0.1.0"
 dependencies = [
  "cbindgen",
+ "core_auth",
+ "core_network",
  "core_parser",
  "core_state",
  "core_storage",
@@ -549,6 +551,7 @@ dependencies = [
  "serde_json",
  "shared_types",
  "tempfile",
+ "tokio",
  "uuid",
 ]
 

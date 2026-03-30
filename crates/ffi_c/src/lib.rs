@@ -13,6 +13,8 @@ use core_parser::TxtParser;
 use core_state::StateManager;
 use shared_types::{Annotation, Bookmark};
 
+use core_auth::AuthProvider;
+
 // ─── FFI Error Codes ─────────────────────────────────────────────────────────
 
 pub const FFI_OK: i32 = 0;
@@ -25,6 +27,7 @@ pub const FFI_ERR_ALREADY_INIT: i32 = -6;
 pub const FFI_ERR_NOT_INIT: i32 = -7;
 pub const FFI_ERR_PANIC: i32 = -98;
 pub const FFI_ERR_UNKNOWN: i32 = -99;
+pub const FFI_ERR_INVALID_JSON: i32 = -100;
 
 // ─── Global Engine State ─────────────────────────────────────────────────────
 
@@ -640,7 +643,7 @@ pub unsafe extern "C" fn reader_add_bookmark(json_ptr: *const u8, json_len: u32)
 
         let bookmark: Bookmark = match serde_json::from_str(json_str) {
             Ok(b) => b,
-            Err(_) => return FFI_ERR_INVALID_UTF8,
+            Err(_) => return FFI_ERR_INVALID_JSON,
         };
 
         let guard = match ENGINE.lock() {
@@ -761,7 +764,7 @@ pub unsafe extern "C" fn reader_add_annotation(json_ptr: *const u8, json_len: u3
 
         let annotation: Annotation = match serde_json::from_str(json_str) {
             Ok(a) => a,
-            Err(_) => return FFI_ERR_INVALID_UTF8,
+            Err(_) => return FFI_ERR_INVALID_JSON,
         };
 
         let guard = match ENGINE.lock() {
@@ -866,6 +869,357 @@ pub unsafe extern "C" fn reader_list_annotations(
     .unwrap_or(FFI_ERR_PANIC)
 }
 
+// ─── Auth & Sync Error Codes ─────────────────────────────────────────────────
+
+pub const FFI_ERR_AUTH: i32 = -10;
+pub const FFI_ERR_NETWORK: i32 = -11;
+pub const FFI_ERR_SYNC: i32 = -12;
+
+// ─── Auth & Sync Global State ────────────────────────────────────────────────
+
+/// Callback function pointer type for auth state changes.
+/// The i32 parameter is the auth state: 0=LoggedOut, 1=Authenticated, 2=NeedsRefresh, 3=NeedsReLogin.
+pub type AuthCallbackFn = Option<extern "C" fn(i32)>;
+
+/// Callback function pointer type for sync state changes.
+/// The i32 parameter is the sync state: 0=Idle, 1=Syncing, 2=Error, 3=Offline, 4=Dormant.
+pub type SyncCallbackFn = Option<extern "C" fn(i32)>;
+
+static AUTH_CALLBACK: Mutex<AuthCallbackFn> = Mutex::new(None);
+static SYNC_CALLBACK: Mutex<SyncCallbackFn> = Mutex::new(None);
+
+/// Tokio runtime for async operations.
+/// Uses `OnceLock` to avoid Mutex ordering issues with ENGINE.
+static TOKIO_RT: std::sync::OnceLock<tokio::runtime::Runtime> = std::sync::OnceLock::new();
+
+/// Ensure the tokio runtime is initialized and return a reference to it.
+fn get_runtime() -> Result<&'static tokio::runtime::Runtime, i32> {
+    if let Some(rt) = TOKIO_RT.get() {
+        return Ok(rt);
+    }
+    // First call: create the runtime and store it.
+    // If two threads race here, only one will win the set(); the other's
+    // Runtime is dropped harmlessly and we return the winner.
+    match tokio::runtime::Runtime::new() {
+        Ok(rt) => Ok(TOKIO_RT.get_or_init(|| rt)),
+        Err(_) => Err(FFI_ERR_UNKNOWN),
+    }
+}
+
+// ─── Auth FFI Functions ──────────────────────────────────────────────────────
+
+/// Register a new user account.
+///
+/// # Safety
+/// All pointer parameters must be valid UTF-8 strings.
+#[no_mangle]
+pub unsafe extern "C" fn reader_auth_register(
+    base_url_ptr: *const u8,
+    base_url_len: u32,
+    username_ptr: *const u8,
+    username_len: u32,
+    email_ptr: *const u8,
+    email_len: u32,
+    password_ptr: *const u8,
+    password_len: u32,
+    out_ptr: *mut *const u8,
+    out_len: *mut u32,
+) -> i32 {
+    catch_unwind(|| {
+        let base_url = match unsafe { ptr_to_str(base_url_ptr, base_url_len) } {
+            Ok(s) => s,
+            Err(code) => return code,
+        };
+        let username = match unsafe { ptr_to_str(username_ptr, username_len) } {
+            Ok(s) => s,
+            Err(code) => return code,
+        };
+        let email = match unsafe { ptr_to_str(email_ptr, email_len) } {
+            Ok(s) => s,
+            Err(code) => return code,
+        };
+        let password = match unsafe { ptr_to_str(password_ptr, password_len) } {
+            Ok(s) => s,
+            Err(code) => return code,
+        };
+
+        if out_ptr.is_null() || out_len.is_null() {
+            return FFI_ERR_NULL_PTR;
+        }
+
+        let rt = match get_runtime() {
+            Ok(rt) => rt,
+            Err(code) => return code,
+        };
+
+        let provider = core_auth::http_auth::HttpAuthProvider::new(base_url);
+        let req = core_auth::RegisterRequest {
+            username: username.to_string(),
+            email: email.to_string(),
+            password: password.to_string(),
+        };
+
+        match rt.block_on(provider.register(&req)) {
+            Ok(user_id) => {
+                let mut guard = match ENGINE.lock() {
+                    Ok(g) => g,
+                    Err(_) => return FFI_ERR_UNKNOWN,
+                };
+                let engine = match guard.as_mut() {
+                    Some(e) => e,
+                    None => return FFI_ERR_NOT_INIT,
+                };
+                let (ptr, len) = set_return_buffer(engine, user_id);
+                unsafe {
+                    *out_ptr = ptr;
+                    *out_len = len;
+                }
+                FFI_OK
+            }
+            Err(_) => FFI_ERR_AUTH,
+        }
+    })
+    .unwrap_or(FFI_ERR_PANIC)
+}
+
+fn auth_login_impl(
+    base_url_ptr: *const u8,
+    base_url_len: u32,
+    credential_ptr: *const u8,
+    credential_len: u32,
+    password_ptr: *const u8,
+    password_len: u32,
+    device_id_ptr: *const u8,
+    device_id_len: u32,
+    device_name_ptr: *const u8,
+    device_name_len: u32,
+    platform_ptr: *const u8,
+    platform_len: u32,
+    out_ptr: *mut *const u8,
+    out_len: *mut u32,
+) -> i32 {
+    catch_unwind(|| {
+        let base_url = match unsafe { ptr_to_str(base_url_ptr, base_url_len) } {
+            Ok(s) => s,
+            Err(code) => return code,
+        };
+        let credential = match unsafe { ptr_to_str(credential_ptr, credential_len) } {
+            Ok(s) => s,
+            Err(code) => return code,
+        };
+        let password = match unsafe { ptr_to_str(password_ptr, password_len) } {
+            Ok(s) => s,
+            Err(code) => return code,
+        };
+        let device_id = match unsafe { ptr_to_str(device_id_ptr, device_id_len) } {
+            Ok(s) => s,
+            Err(code) => return code,
+        };
+        let device_name = if device_name_ptr.is_null() {
+            None
+        } else {
+            match unsafe { ptr_to_str(device_name_ptr, device_name_len) } {
+                Ok(s) => Some(s.to_string()),
+                Err(code) => return code,
+            }
+        };
+        let platform = if platform_ptr.is_null() {
+            None
+        } else {
+            match unsafe { ptr_to_str(platform_ptr, platform_len) } {
+                Ok(s) => Some(s.to_string()),
+                Err(code) => return code,
+            }
+        };
+
+        if out_ptr.is_null() || out_len.is_null() {
+            return FFI_ERR_NULL_PTR;
+        }
+
+        let rt = match get_runtime() {
+            Ok(rt) => rt,
+            Err(code) => return code,
+        };
+
+        let provider = core_auth::http_auth::HttpAuthProvider::new(base_url);
+        let req = core_auth::LoginRequest {
+            credential: credential.to_string(),
+            password: password.to_string(),
+            device_id: device_id.to_string(),
+            device_name,
+            platform,
+        };
+
+        match rt.block_on(provider.login(&req)) {
+            Ok(token) => {
+                let json = match serde_json::to_string(&token) {
+                    Ok(j) => j,
+                    Err(_) => return FFI_ERR_UNKNOWN,
+                };
+                let mut guard = match ENGINE.lock() {
+                    Ok(g) => g,
+                    Err(_) => return FFI_ERR_UNKNOWN,
+                };
+                let engine = match guard.as_mut() {
+                    Some(e) => e,
+                    None => return FFI_ERR_NOT_INIT,
+                };
+                let (ptr, len) = set_return_buffer(engine, json);
+                unsafe {
+                    *out_ptr = ptr;
+                    *out_len = len;
+                }
+                FFI_OK
+            }
+            Err(_) => FFI_ERR_AUTH,
+        }
+    })
+    .unwrap_or(FFI_ERR_PANIC)
+}
+
+/// Login with credentials. Returns JSON with token info.
+///
+/// # Safety
+/// All pointer parameters must be valid.
+#[no_mangle]
+pub unsafe extern "C" fn reader_auth_login(
+    base_url_ptr: *const u8,
+    base_url_len: u32,
+    credential_ptr: *const u8,
+    credential_len: u32,
+    password_ptr: *const u8,
+    password_len: u32,
+    device_id_ptr: *const u8,
+    device_id_len: u32,
+    out_ptr: *mut *const u8,
+    out_len: *mut u32,
+) -> i32 {
+    auth_login_impl(
+        base_url_ptr,
+        base_url_len,
+        credential_ptr,
+        credential_len,
+        password_ptr,
+        password_len,
+        device_id_ptr,
+        device_id_len,
+        std::ptr::null(),
+        0,
+        std::ptr::null(),
+        0,
+        out_ptr,
+        out_len,
+    )
+}
+
+/// Login with credentials and optional device metadata. Returns JSON with token info.
+///
+/// # Safety
+/// All non-null pointer parameters must be valid.
+#[no_mangle]
+pub unsafe extern "C" fn reader_auth_login_with_metadata(
+    base_url_ptr: *const u8,
+    base_url_len: u32,
+    credential_ptr: *const u8,
+    credential_len: u32,
+    password_ptr: *const u8,
+    password_len: u32,
+    device_id_ptr: *const u8,
+    device_id_len: u32,
+    device_name_ptr: *const u8,
+    device_name_len: u32,
+    platform_ptr: *const u8,
+    platform_len: u32,
+    out_ptr: *mut *const u8,
+    out_len: *mut u32,
+) -> i32 {
+    auth_login_impl(
+        base_url_ptr,
+        base_url_len,
+        credential_ptr,
+        credential_len,
+        password_ptr,
+        password_len,
+        device_id_ptr,
+        device_id_len,
+        device_name_ptr,
+        device_name_len,
+        platform_ptr,
+        platform_len,
+        out_ptr,
+        out_len,
+    )
+}
+
+/// Logout the current session.
+///
+/// # Safety
+/// All pointer parameters must be valid.
+#[no_mangle]
+pub unsafe extern "C" fn reader_auth_logout(
+    base_url_ptr: *const u8,
+    base_url_len: u32,
+    access_token_ptr: *const u8,
+    access_token_len: u32,
+) -> i32 {
+    catch_unwind(|| {
+        let base_url = match unsafe { ptr_to_str(base_url_ptr, base_url_len) } {
+            Ok(s) => s,
+            Err(code) => return code,
+        };
+        let access_token = match unsafe { ptr_to_str(access_token_ptr, access_token_len) } {
+            Ok(s) => s,
+            Err(code) => return code,
+        };
+
+        let rt = match get_runtime() {
+            Ok(rt) => rt,
+            Err(code) => return code,
+        };
+
+        let provider = core_auth::http_auth::HttpAuthProvider::new(base_url);
+        match rt.block_on(provider.logout(access_token)) {
+            Ok(()) => FFI_OK,
+            Err(_) => FFI_ERR_AUTH,
+        }
+    })
+    .unwrap_or(FFI_ERR_PANIC)
+}
+
+/// Set the auth state change callback.
+///
+/// # Safety
+/// `callback` must be a valid function pointer or null.
+#[no_mangle]
+pub unsafe extern "C" fn reader_set_auth_callback(callback: AuthCallbackFn) -> i32 {
+    catch_unwind(|| {
+        let mut guard = match AUTH_CALLBACK.lock() {
+            Ok(g) => g,
+            Err(_) => return FFI_ERR_UNKNOWN,
+        };
+        *guard = callback;
+        FFI_OK
+    })
+    .unwrap_or(FFI_ERR_PANIC)
+}
+
+/// Set the sync state change callback.
+///
+/// # Safety
+/// `callback` must be a valid function pointer or null.
+#[no_mangle]
+pub unsafe extern "C" fn reader_set_sync_callback(callback: SyncCallbackFn) -> i32 {
+    catch_unwind(|| {
+        let mut guard = match SYNC_CALLBACK.lock() {
+            Ok(g) => g,
+            Err(_) => return FFI_ERR_UNKNOWN,
+        };
+        *guard = callback;
+        FFI_OK
+    })
+    .unwrap_or(FFI_ERR_PANIC)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -963,6 +1317,7 @@ mod tests {
         assert_eq!(FFI_ERR_NOT_INIT, -7);
         assert_eq!(FFI_ERR_PANIC, -98);
         assert_eq!(FFI_ERR_UNKNOWN, -99);
+        assert_eq!(FFI_ERR_INVALID_JSON, -100);
     }
 
     // ─── Engine Lifecycle Tests ──────────────────────────────────────────────
@@ -1453,7 +1808,7 @@ let (_dir, db_path) = temp_db_path();
         let result = unsafe {
             reader_add_bookmark(bad_json.as_ptr(), bad_json.len() as u32)
         };
-        assert_eq!(result, FFI_ERR_INVALID_UTF8);
+        assert_eq!(result, FFI_ERR_INVALID_JSON);
 
         unsafe { reader_engine_destroy() };
     }
@@ -1469,7 +1824,7 @@ let (_dir, db_path) = temp_db_path();
         let result = unsafe {
             reader_add_annotation(bad_json.as_ptr(), bad_json.len() as u32)
         };
-        assert_eq!(result, FFI_ERR_INVALID_UTF8);
+        assert_eq!(result, FFI_ERR_INVALID_JSON);
 
         unsafe { reader_engine_destroy() };
     }

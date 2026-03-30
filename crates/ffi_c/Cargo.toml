@@ -12,9 +12,12 @@ core_parser = { workspace = true }
 core_state = { workspace = true }
 core_storage = { workspace = true }
 core_sync = { workspace = true }
+core_auth = { workspace = true }
+core_network = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 uuid = { workspace = true }
+tokio = { workspace = true }
 
 [build-dependencies]
 cbindgen = "0.27"
