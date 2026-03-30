@@ -57,6 +57,9 @@ wasm-bindgen-test = "0.3"
 tokio = { version = "1.0", features = ["full"] }
 axum = "0.7"
 
+# Logging
+tracing = "0.1"
+
 # Crypto
 sha2 = "0.10"
 
