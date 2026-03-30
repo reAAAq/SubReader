@@ -9,6 +9,65 @@ import SwiftUI
 import AppKit
 import ReaderModels
 
+private let defaultWindowTitle =
+    (Bundle.main.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String)
+    ?? (Bundle.main.object(forInfoDictionaryKey: "CFBundleName") as? String)
+    ?? "SubReader"
+
+private struct ReaderWindowTitleVisibilityView: NSViewRepresentable {
+    let isHidden: Bool
+
+    func makeNSView(context: Context) -> ReaderWindowTitleVisibilityNSView {
+        let view = ReaderWindowTitleVisibilityNSView()
+        view.isTitleHidden = isHidden
+        return view
+    }
+
+    func updateNSView(_ nsView: ReaderWindowTitleVisibilityNSView, context: Context) {
+        nsView.isTitleHidden = isHidden
+    }
+
+    static func dismantleNSView(_ nsView: ReaderWindowTitleVisibilityNSView, coordinator: ()) {
+        nsView.isTitleHidden = false
+    }
+}
+
+private final class ReaderWindowTitleVisibilityNSView: NSView {
+    var isTitleHidden = false {
+        didSet { applyWindowTitleVisibility() }
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        applyWindowTitleVisibility()
+    }
+
+    override func viewWillMove(toWindow newWindow: NSWindow?) {
+        if let currentWindow = window, newWindow == nil {
+            currentWindow.titleVisibility = .visible
+            currentWindow.title = defaultWindowTitle
+        }
+        super.viewWillMove(toWindow: newWindow)
+    }
+
+    private func applyWindowTitleVisibility() {
+        guard let window else { return }
+        window.titleVisibility = isTitleHidden ? .hidden : .visible
+        window.title = isTitleHidden ? "" : defaultWindowTitle
+    }
+}
+
+private extension View {
+    @ViewBuilder
+    func readerWindowTitleHidden() -> some View {
+        if #available(macOS 15.0, *) {
+            self.toolbar(removing: .title)
+        } else {
+            self.background(ReaderWindowTitleVisibilityView(isHidden: true))
+        }
+    }
+}
+
 // MARK: - Collection Section (shared)
 
 private enum ReaderCollectionSection: String, CaseIterable, Identifiable {
@@ -83,15 +142,6 @@ struct ReaderToolbarModifier: ViewModifier {
                     }
                     .help(L("sidebar.toc"))
 
-                    Button {
-                        withAnimation(.easeInOut(duration: 0.15)) {
-                            preferences.pageLayoutMode = preferences.pageLayoutMode == .dual ? .single : .dual
-                        }
-                    } label: {
-                        Image(systemName: dualPageIconName)
-                    }
-                    .help(L("reader.layout"))
-
                     Menu {
                         Button(L("reader.layoutAutomatic")) {
                             preferences.pageLayoutMode = .automatic
@@ -122,7 +172,9 @@ struct ReaderToolbarModifier: ViewModifier {
                     Text(config.bookTitle)
                         .font(.system(size: 13, weight: .medium))
                         .lineLimit(1)
+                        .truncationMode(.middle)
                         .frame(maxWidth: 400)
+                        .help(config.chapterTitle)
                 }
 
                 ToolbarItemGroup(placement: .primaryAction) {
@@ -154,6 +206,7 @@ struct ReaderToolbarModifier: ViewModifier {
                     .help(L("commands.bookmarkCurrentPage"))
                 }
             }
+            .readerWindowTitleHidden()
             .toolbarBackground(.hidden, for: .windowToolbar)
             .onKeyPress(.escape) {
                 if dismissVisiblePopover() {
@@ -185,15 +238,7 @@ struct ReaderToolbarModifier: ViewModifier {
 
     // MARK: - Layout Icons
 
-    /// Icon for the dual-page view toggle (2nd button from left in Apple Books).
-    private var dualPageIconName: String {
-        switch preferences.pageLayoutMode {
-        case .dual: return "rectangle.split.2x1.fill"
-        default: return "rectangle.split.2x1"
-        }
-    }
-
-    /// Icon for the page layout menu (3rd button from left in Apple Books).
+    /// Icon for the page layout menu in the reader titlebar.
     private var layoutIconName: String {
         switch preferences.pageLayoutMode {
         case .automatic: return "rectangle.3.group"

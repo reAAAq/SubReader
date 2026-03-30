@@ -169,6 +169,7 @@ struct TxtReaderView: View {
             )
         }
         .navigationBarBackButtonHidden(true)
+        .navigationTitle("")
         .readerToolbar(config: ReaderToolbarConfig(
             bookTitle: book.metadata.title,
             chapterTitle: currentChapterTitle,
@@ -325,7 +326,7 @@ struct TxtReaderView: View {
         }
         navigateToChapter(index: currentChapterIndex, restoreOffset: savedCharacterOffset)
     }
-
+    
     private func returnToLibrary() {
         invalidateAsyncRequests()
         saveProgress()

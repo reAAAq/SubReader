@@ -175,6 +175,7 @@ struct ReaderView: View {
             )
         }
         .navigationBarBackButtonHidden(true)
+        .navigationTitle("")
         .readerToolbar(config: ReaderToolbarConfig(
             bookTitle: metadata?.title ?? L("reader.reading"),
             chapterTitle: currentChapterTitle,
