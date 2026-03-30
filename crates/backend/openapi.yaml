@@ -1,0 +1,1130 @@
+openapi: "3.0.3"
+info:
+  title: SubReader Backend API
+  description: |
+    SubReader cloud sync backend service API documentation.
+
+    Provides account management, multi-device data synchronization, and file storage capabilities.
+
+    ## Authentication
+    Most endpoints require a JWT Bearer token obtained via the login endpoint.
+    Include the token in the `Authorization` header:
+    ```
+    Authorization: Bearer <access_token>
+    ```
+
+    ## Error Handling
+    All error responses follow a unified format:
+    ```json
+    {
+      "error": "error_type",
+      "message": "Human-readable error description"
+    }
+    ```
+  version: "0.1.0"
+  contact:
+    name: SubReader Team
+  license:
+    name: MIT
+
+servers:
+  - url: http://localhost:8080
+    description: Local development server
+
+tags:
+  - name: Health
+    description: Service health check
+  - name: Auth
+    description: Authentication & account management
+  - name: Devices
+    description: Device management
+  - name: Sync
+    description: Data synchronization (CRDT-based)
+  - name: Files
+    description: File upload, download & management
+
+# ─── Security Schemes ─────────────────────────────────────────────────────────
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: JWT access token obtained from /auth/login
+
+  # ─── Reusable Schemas ─────────────────────────────────────────────────────
+
+  schemas:
+    # ── Error ──
+    ErrorResponse:
+      type: object
+      required: [error, message]
+      properties:
+        error:
+          type: string
+          description: Error type identifier
+          example: bad_request
+        message:
+          type: string
+          description: Human-readable error message
+          example: Invalid input
+
+    # ── Health ──
+    HealthResponse:
+      type: object
+      required: [status, version]
+      properties:
+        status:
+          type: string
+          example: ok
+        version:
+          type: string
+          example: "0.1.0"
+
+    # ── Auth ──
+    RegisterRequest:
+      type: object
+      required: [username, email, password]
+      properties:
+        username:
+          type: string
+          minLength: 3
+          maxLength: 32
+          example: johndoe
+        email:
+          type: string
+          format: email
+          example: john@example.com
+        password:
+          type: string
+          minLength: 8
+          format: password
+          example: MyStr0ngP@ss!
+
+    RegisterResponse:
+      type: object
+      required: [user_id, message]
+      properties:
+        user_id:
+          type: string
+          format: uuid
+          example: 550e8400-e29b-41d4-a716-446655440000
+        message:
+          type: string
+          example: Registration successful
+
+    LoginRequest:
+      type: object
+      required: [credential, password, device_id]
+      properties:
+        credential:
+          type: string
+          description: Username or email address
+          example: johndoe
+        password:
+          type: string
+          format: password
+          example: MyStr0ngP@ss!
+        device_id:
+          type: string
+          description: Client-generated unique device identifier
+          example: dev-macbook-001
+        device_name:
+          type: string
+          description: Human-readable device name
+          example: MacBook Pro
+        platform:
+          type: string
+          description: "Platform identifier (e.g., ios, macos, android, web)"
+          example: macOS
+
+    LoginResponse:
+      type: object
+      required: [access_token, refresh_token, expires_in, user_id]
+      properties:
+        access_token:
+          type: string
+          description: JWT access token
+          example: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+        refresh_token:
+          type: string
+          description: Opaque refresh token (UUID)
+          example: cdf6b7b7-4084-4967-8ebc-5b4a788b8144
+        expires_in:
+          type: integer
+          description: Access token expiry in seconds
+          example: 3600
+        user_id:
+          type: string
+          format: uuid
+          example: 550e8400-e29b-41d4-a716-446655440000
+
+    RefreshRequest:
+      type: object
+      required: [refresh_token, device_id]
+      properties:
+        refresh_token:
+          type: string
+          description: Refresh token obtained from login or previous refresh
+          example: cdf6b7b7-4084-4967-8ebc-5b4a788b8144
+        device_id:
+          type: string
+          description: Must match the device_id used during login
+          example: dev-macbook-001
+
+    RefreshResponse:
+      type: object
+      required: [access_token, refresh_token, expires_in, user_id]
+      properties:
+        access_token:
+          type: string
+          example: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+        refresh_token:
+          type: string
+          description: New refresh token (old one is revoked — token rotation)
+          example: a1b2c3d4-5678-90ab-cdef-1234567890ab
+        expires_in:
+          type: integer
+          example: 3600
+        user_id:
+          type: string
+          description: User ID associated with the refreshed session
+          example: 550e8400-e29b-41d4-a716-446655440000
+
+    ChangePasswordRequest:
+      type: object
+      required: [old_password, new_password]
+      properties:
+        old_password:
+          type: string
+          format: password
+          example: MyStr0ngP@ss!
+        new_password:
+          type: string
+          format: password
+          minLength: 8
+          example: NewStr0ngP@ss!
+
+    MessageResponse:
+      type: object
+      required: [message]
+      properties:
+        message:
+          type: string
+          example: Operation completed successfully
+
+    # ── Devices ──
+    DeviceInfo:
+      type: object
+      required: [device_id, device_name, platform, last_active_at, created_at]
+      properties:
+        device_id:
+          type: string
+          example: dev-macbook-001
+        device_name:
+          type: string
+          example: MacBook Pro
+        platform:
+          type: string
+          example: macOS
+        last_active_at:
+          type: string
+          format: date-time
+          example: "2025-01-15T10:30:00"
+        created_at:
+          type: string
+          format: date-time
+          example: "2025-01-01T08:00:00"
+
+    DevicesResponse:
+      type: object
+      required: [devices]
+      properties:
+        devices:
+          type: array
+          items:
+            $ref: "#/components/schemas/DeviceInfo"
+
+    # ── Sync ──
+    PushOperation:
+      type: object
+      required: [op_id, op_type, op_data, hlc_ts]
+      properties:
+        op_id:
+          type: string
+          description: Client-generated unique operation ID
+          example: op-001
+        op_type:
+          type: string
+          description: "Operation type (e.g., UpdateProgress, AddBookmark, DeleteAnnotation)"
+          example: UpdateProgress
+        op_data:
+          type: string
+          description: JSON-serialized operation payload
+          example: '{"book_id":"book-1","progress":0.5}'
+        hlc_ts:
+          type: integer
+          format: int64
+          description: Hybrid Logical Clock timestamp
+          example: 1700000000
+
+    PushRequest:
+      type: object
+      required: [operations]
+      properties:
+        operations:
+          type: array
+          description: Batch of operations to push (max 500 per request)
+          maxItems: 500
+          items:
+            $ref: "#/components/schemas/PushOperation"
+
+    PushResponse:
+      type: object
+      required: [accepted_count, server_timestamp]
+      properties:
+        accepted_count:
+          type: integer
+          description: Number of operations accepted (duplicates are skipped)
+          example: 2
+        server_timestamp:
+          type: string
+          format: date-time
+          description: Server timestamp when push was processed
+          example: "2025-01-15T10:30:00+00:00"
+
+    PullOperation:
+      type: object
+      required: [server_seq, op_id, op_type, op_data, hlc_ts, device_id, created_at]
+      properties:
+        server_seq:
+          type: integer
+          format: int64
+          description: Server-assigned sequence number (monotonically increasing)
+          example: 42
+        op_id:
+          type: string
+          example: op-001
+        op_type:
+          type: string
+          example: UpdateProgress
+        op_data:
+          type: string
+          example: '{"book_id":"book-1","progress":0.5}'
+        hlc_ts:
+          type: integer
+          format: int64
+          example: 1700000000
+        device_id:
+          type: string
+          example: dev-macbook-001
+        created_at:
+          type: string
+          format: date-time
+          example: "2025-01-15T10:30:00"
+
+    PullResponse:
+      type: object
+      required: [operations, next_cursor, has_more]
+      properties:
+        operations:
+          type: array
+          items:
+            $ref: "#/components/schemas/PullOperation"
+        next_cursor:
+          type: integer
+          format: int64
+          description: Use this value as the cursor parameter for the next pull request
+          example: 42
+        has_more:
+          type: boolean
+          description: Whether there are more operations to pull
+          example: false
+
+    # ── Files ──
+    UploadInitRequest:
+      type: object
+      required: [file_name, file_size, sha256]
+      properties:
+        file_name:
+          type: string
+          maxLength: 255
+          description: Original file name
+          example: my-book.epub
+        file_size:
+          type: integer
+          format: int64
+          description: Total file size in bytes (max 500MB)
+          minimum: 1
+          maximum: 524288000
+          example: 10485760
+        sha256:
+          type: string
+          description: Expected SHA-256 hash of the complete file
+          example: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+        chunk_size:
+          type: integer
+          format: int64
+          description: "Chunk size in bytes (default: 4MB, min: 1KB, max: 8MB)"
+          minimum: 1024
+          maximum: 8388608
+          example: 4194304
+
+    UploadInitResponse:
+      type: object
+      required: [upload_id, chunk_size, total_chunks]
+      properties:
+        upload_id:
+          type: string
+          format: uuid
+          description: Upload session ID
+          example: e1f1d3be-5bf3-49b0-b748-cf3191007f53
+        chunk_size:
+          type: integer
+          format: int64
+          description: Actual chunk size used
+          example: 4194304
+        total_chunks:
+          type: integer
+          format: int64
+          description: Total number of chunks to upload
+          example: 3
+
+    UploadChunkResponse:
+      type: object
+      required: [chunk_index, received_bytes]
+      properties:
+        chunk_index:
+          type: integer
+          format: int64
+          example: 0
+        received_bytes:
+          type: integer
+          format: int64
+          example: 4194304
+
+    UploadCompleteResponse:
+      type: object
+      required: [file_id, file_name, file_size, sha256]
+      properties:
+        file_id:
+          type: string
+          format: uuid
+          example: fc73b66d-5381-43b2-a541-c8b7eb05a32e
+        file_name:
+          type: string
+          example: my-book.epub
+        file_size:
+          type: integer
+          format: int64
+          example: 10485760
+        sha256:
+          type: string
+          example: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+
+    FileInfo:
+      type: object
+      required: [file_id, file_name, file_size, sha256, created_at]
+      properties:
+        file_id:
+          type: string
+          format: uuid
+          example: fc73b66d-5381-43b2-a541-c8b7eb05a32e
+        file_name:
+          type: string
+          example: my-book.epub
+        file_size:
+          type: integer
+          format: int64
+          example: 10485760
+        sha256:
+          type: string
+          example: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+        created_at:
+          type: string
+          format: date-time
+          example: "2025-01-15T10:30:00"
+
+    FilesListResponse:
+      type: object
+      required: [files]
+      properties:
+        files:
+          type: array
+          items:
+            $ref: "#/components/schemas/FileInfo"
+
+# ─── API Paths ─────────────────────────────────────────────────────────────────
+
+paths:
+  # ── Health ──
+  /health:
+    get:
+      tags: [Health]
+      summary: Health check
+      description: Returns service status and version. No authentication required.
+      operationId: healthCheck
+      responses:
+        "200":
+          description: Service is healthy
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+
+  # ── Auth ──
+  /auth/register:
+    post:
+      tags: [Auth]
+      summary: Register a new user
+      description: |
+        Create a new user account.
+
+        **Validation rules:**
+        - Username: 3–32 characters, must be unique
+        - Email: must contain `@` and `.`, must be unique
+        - Password: minimum 8 characters
+      operationId: register
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RegisterRequest"
+      responses:
+        "200":
+          description: Registration successful
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RegisterResponse"
+        "400":
+          description: Invalid input (username/email/password validation failed)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error: bad_request
+                message: Username must be between 3 and 32 characters
+        "409":
+          description: Username or email already taken
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error: conflict
+                message: Username already taken
+
+  /auth/login:
+    post:
+      tags: [Auth]
+      summary: User login
+      description: |
+        Authenticate with username/email and password.
+        Returns JWT access token and refresh token.
+
+        The `device_id` is used for multi-device management and token scoping.
+        Logging in again with the same `device_id` revokes any older active refresh tokens for that device.
+      operationId: login
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoginRequest"
+      responses:
+        "200":
+          description: Login successful
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LoginResponse"
+        "401":
+          description: Invalid credentials
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error: unauthorized
+                message: Invalid credentials
+
+  /auth/refresh:
+    post:
+      tags: [Auth]
+      summary: Refresh access token
+      description: |
+        Exchange a valid refresh token for a new access token and refresh token.
+
+        **Token rotation:** The old refresh token is revoked after use.
+        Each refresh token can only be used once.
+        Refresh fails if the device has been deauthorized.
+      operationId: refreshToken
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RefreshRequest"
+      responses:
+        "200":
+          description: Token refreshed successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RefreshResponse"
+        "401":
+          description: Invalid, expired, or deauthorized device refresh token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error: unauthorized
+                message: Invalid or expired refresh token
+
+  /auth/logout:
+    post:
+      tags: [Auth]
+      summary: Logout current device
+      description: |
+        Revokes all refresh tokens for the current device and deauthorizes that device.
+
+        **Side effects:**
+        - Current device refresh tokens are revoked
+        - Current device is marked inactive
+        - Existing access tokens for the current device are rejected immediately
+      operationId: logout
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: Logged out successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageResponse"
+              example:
+                message: Logged out successfully
+        "401":
+          description: Unauthorized — missing or invalid token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /auth/password:
+    put:
+      tags: [Auth]
+      summary: Change password
+      description: |
+        Change the current user's password.
+
+        **Side effects:**
+        - All refresh tokens across all devices are revoked
+        - User must re-login on all devices
+      operationId: changePassword
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ChangePasswordRequest"
+      responses:
+        "200":
+          description: Password changed successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageResponse"
+              example:
+                message: "Password changed successfully. Please log in again on all devices."
+        "400":
+          description: New password too short
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Old password incorrect or token invalid
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /auth/account:
+    delete:
+      tags: [Auth]
+      summary: Delete account
+      description: |
+        Soft-delete the current user's account.
+        All refresh tokens are revoked. The user data is marked as deleted
+        but not immediately purged from the database.
+      operationId: deleteAccount
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: Account deleted successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageResponse"
+              example:
+                message: Account deleted successfully
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  # ── Devices ──
+  /auth/devices:
+    get:
+      tags: [Devices]
+      summary: List devices
+      description: Returns active devices associated with the current user, ordered by last active time.
+      operationId: listDevices
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: Device list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DevicesResponse"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /auth/devices/{device_id}:
+    delete:
+      tags: [Devices]
+      summary: Remove a device
+      description: |
+        Remove a device, revoke all of its refresh tokens, and deauthorize it.
+        Can be used to remotely log out another device.
+
+        **Side effects:**
+        - Target device refresh tokens are revoked
+        - Target device is marked inactive
+        - Existing access tokens for the target device are rejected immediately
+      operationId: removeDevice
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: device_id
+          in: path
+          required: true
+          description: The device ID to remove
+          schema:
+            type: string
+            example: dev-iphone-002
+      responses:
+        "200":
+          description: Device removed successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageResponse"
+              example:
+                message: Device removed successfully
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  # ── Sync ──
+  /sync/push:
+    post:
+      tags: [Sync]
+      summary: Push operations
+      description: |
+        Push a batch of CRDT operations to the server.
+
+        The server records the originating `device_id` from the authenticated bearer token,
+        not from the request body.
+
+        **Features:**
+        - Idempotent: duplicate `op_id` values are silently skipped
+        - Atomic: all operations in a batch are committed in a single transaction
+        - Max 500 operations per request
+      operationId: syncPush
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PushRequest"
+      responses:
+        "200":
+          description: Push completed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PushResponse"
+        "400":
+          description: Empty batch or exceeds 500 operations
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /sync/pull:
+    get:
+      tags: [Sync]
+      summary: Pull operations
+      description: |
+        Pull operations from the server using cursor-based pagination.
+
+        Start with `cursor=0` to pull from the beginning.
+        Use the `next_cursor` value from the response for subsequent requests.
+        Continue pulling until `has_more` is `false`.
+      operationId: syncPull
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: cursor
+          in: query
+          required: false
+          description: "Server sequence cursor (default: 0 = from beginning)"
+          schema:
+            type: integer
+            format: int64
+            default: 0
+            example: 0
+        - name: limit
+          in: query
+          required: false
+          description: "Number of operations to return (default: 100, max: 1000)"
+          schema:
+            type: integer
+            format: int64
+            default: 100
+            minimum: 1
+            maximum: 1000
+            example: 100
+      responses:
+        "200":
+          description: Pull completed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PullResponse"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  # ── Files ──
+  /files:
+    get:
+      tags: [Files]
+      summary: List files
+      description: Returns all files belonging to the current user, ordered by creation time (newest first).
+      operationId: listFiles
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: File list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FilesListResponse"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /files/upload/init:
+    post:
+      tags: [Files]
+      summary: Initialize chunked upload
+      description: |
+        Start a new chunked file upload session.
+
+        **Deduplication:** If a file with the same SHA-256 hash already exists
+        for this user, a `409 Conflict` is returned with the existing file ID.
+
+        **Limits:**
+        - Max file size: 500MB
+        - File name: 1–255 characters
+        - Default chunk size: 4MB (min 1KB)
+      operationId: uploadInit
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UploadInitRequest"
+      responses:
+        "200":
+          description: Upload session created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UploadInitResponse"
+        "400":
+          description: Invalid file size or file name
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: File with same SHA-256 already exists
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error: conflict
+                message: "File with same hash already exists: fc73b66d-..."
+
+  /files/upload/{upload_id}/chunk/{index}:
+    put:
+      tags: [Files]
+      summary: Upload a chunk
+      description: |
+        Upload a single chunk of a file.
+
+        Send the raw binary data as the request body with `Content-Type: application/octet-stream`.
+        Max chunk body size: 8MB.
+
+        Chunks can be uploaded in any order and are idempotent (re-uploading overwrites).
+      operationId: uploadChunk
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: upload_id
+          in: path
+          required: true
+          description: Upload session ID from /files/upload/init
+          schema:
+            type: string
+            format: uuid
+            example: e1f1d3be-5bf3-49b0-b748-cf3191007f53
+        - name: index
+          in: path
+          required: true
+          description: "Zero-based chunk index (0 to total_chunks-1)"
+          schema:
+            type: integer
+            format: int64
+            minimum: 0
+            example: 0
+      requestBody:
+        required: true
+        content:
+          application/octet-stream:
+            schema:
+              type: string
+              format: binary
+      responses:
+        "200":
+          description: Chunk uploaded successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UploadChunkResponse"
+        "400":
+          description: Invalid chunk index or failed to read data
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Upload session not found or already completed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /files/upload/{upload_id}/complete:
+    post:
+      tags: [Files]
+      summary: Complete upload
+      description: |
+        Finalize a chunked upload session.
+
+        The server will:
+        1. Verify all chunks have been uploaded
+        2. Merge chunks into a single file
+        3. Compute and verify SHA-256 hash
+        4. Verify total file size
+        5. Store the file and create metadata record
+        6. Clean up temporary chunk data
+
+        If SHA-256 or file size verification fails, the upload is rejected.
+      operationId: uploadComplete
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: upload_id
+          in: path
+          required: true
+          description: Upload session ID
+          schema:
+            type: string
+            format: uuid
+            example: e1f1d3be-5bf3-49b0-b748-cf3191007f53
+      responses:
+        "200":
+          description: Upload completed and file stored
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UploadCompleteResponse"
+        "400":
+          description: Missing chunks, SHA-256 mismatch, or file size mismatch
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error: bad_request
+                message: "Expected 3 chunks, but only 2 received"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Upload session not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /files/{file_id}:
+    get:
+      tags: [Files]
+      summary: Download a file
+      description: |
+        Download a file by its ID.
+        Returns the raw file content as `application/octet-stream` with a
+        `Content-Disposition` header for the original file name.
+
+        The response body is streamed by the server to avoid loading the
+        entire file into memory. HTTP Range requests are not currently supported.
+      operationId: downloadFile
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: file_id
+          in: path
+          required: true
+          description: File ID
+          schema:
+            type: string
+            format: uuid
+            example: fc73b66d-5381-43b2-a541-c8b7eb05a32e
+      responses:
+        "200":
+          description: File content
+          headers:
+            Content-Disposition:
+              description: 'Attachment with original filename'
+              schema:
+                type: string
+                example: 'attachment; filename="my-book.epub"'
+            Content-Length:
+              description: File size in bytes
+              schema:
+                type: integer
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: File not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+    delete:
+      tags: [Files]
+      summary: Delete a file
+      description: |
+        Soft-delete a file. The file metadata is marked as deleted
+        but not immediately purged from storage.
+      operationId: deleteFile
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: file_id
+          in: path
+          required: true
+          description: File ID to delete
+          schema:
+            type: string
+            format: uuid
+            example: fc73b66d-5381-43b2-a541-c8b7eb05a32e
+      responses:
+        "200":
+          description: File deleted successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageResponse"
+              example:
+                message: File deleted successfully
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: File not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
