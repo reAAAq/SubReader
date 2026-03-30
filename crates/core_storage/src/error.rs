@@ -8,9 +8,6 @@ pub enum StorageError {
     #[error("Database locked: {0}")]
     DatabaseLocked(String),
 
-    #[error("Migration failed: {0}")]
-    MigrationFailed(String),
-
     #[error("Query failed: {0}")]
     QueryFailed(String),
 

@@ -5,7 +5,6 @@
 
 pub mod db;
 pub mod error;
-pub mod migrations;
 
 pub use db::Database;
 pub use error::StorageError;

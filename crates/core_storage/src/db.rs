@@ -8,6 +8,87 @@ use shared_types::{Annotation, Bookmark, ReadingProgress, UserPreference};
 
 use crate::StorageError;
 
+fn init_schema(conn: &Connection) -> Result<(), StorageError> {
+    conn.execute_batch(
+        "
+        CREATE TABLE IF NOT EXISTS books (
+            id TEXT PRIMARY KEY,
+            title TEXT NOT NULL,
+            author TEXT NOT NULL DEFAULT '',
+            format TEXT NOT NULL,
+            file_hash TEXT,
+            file_size INTEGER,
+            cover_path TEXT,
+            added_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+
+        CREATE TABLE IF NOT EXISTS reading_progress (
+            book_id TEXT PRIMARY KEY REFERENCES books(id) ON DELETE CASCADE,
+            cfi_position TEXT NOT NULL,
+            percentage REAL NOT NULL DEFAULT 0.0,
+            hlc_ts INTEGER NOT NULL DEFAULT 0,
+            updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+
+        CREATE TABLE IF NOT EXISTS bookmarks (
+            id TEXT PRIMARY KEY,
+            book_id TEXT NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+            cfi_position TEXT NOT NULL,
+            title TEXT,
+            created_at INTEGER NOT NULL DEFAULT 0
+        );
+        CREATE INDEX IF NOT EXISTS idx_bookmarks_book_id ON bookmarks(book_id);
+
+        CREATE TABLE IF NOT EXISTS annotations (
+            id TEXT PRIMARY KEY,
+            book_id TEXT NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+            cfi_start TEXT NOT NULL,
+            cfi_end TEXT NOT NULL,
+            color_rgba TEXT NOT NULL DEFAULT '#FFFF00FF',
+            note TEXT,
+            created_at INTEGER NOT NULL DEFAULT 0
+        );
+        CREATE INDEX IF NOT EXISTS idx_annotations_book_id ON annotations(book_id);
+
+        CREATE TABLE IF NOT EXISTS preferences (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL,
+            hlc_ts INTEGER NOT NULL DEFAULT 0
+        );
+
+        CREATE TABLE IF NOT EXISTS op_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            op_type TEXT NOT NULL,
+            op_data TEXT NOT NULL,
+            hlc_ts INTEGER NOT NULL,
+            device_id TEXT NOT NULL,
+            synced INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_op_log_synced ON op_log(synced, hlc_ts);
+
+        CREATE TABLE IF NOT EXISTS sync_metadata (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL,
+            updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+
+        CREATE TABLE IF NOT EXISTS reading_stats (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            book_id TEXT NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+            session_start TEXT NOT NULL,
+            session_end TEXT,
+            pages_read INTEGER DEFAULT 0,
+            duration_secs INTEGER DEFAULT 0
+        );
+        CREATE INDEX IF NOT EXISTS idx_reading_stats_book_id ON reading_stats(book_id);
+        ",
+    )
+    .map_err(|e| StorageError::QueryFailed(e.to_string()))?;
+
+    Ok(())
+}
+
 /// Main database handle.
 pub struct Database {
     conn: Connection,
@@ -19,7 +100,7 @@ impl Database {
         let conn = Connection::open(path)?;
         conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")
             .map_err(|e| StorageError::QueryFailed(e.to_string()))?;
-        crate::migrations::run_migrations(&conn)?;
+        init_schema(&conn)?;
         Ok(Self { conn })
     }
 
@@ -28,7 +109,7 @@ impl Database {
         let conn = Connection::open_in_memory()?;
         conn.execute_batch("PRAGMA foreign_keys=ON;")
             .map_err(|e| StorageError::QueryFailed(e.to_string()))?;
-        crate::migrations::run_migrations(&conn)?;
+        init_schema(&conn)?;
         Ok(Self { conn })
     }
 
