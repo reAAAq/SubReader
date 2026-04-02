@@ -58,11 +58,64 @@ public final class MockReaderEngine: ReaderEngineProtocol, @unchecked Sendable {
 
     // MARK: - ReaderEngineProtocol
 
-    public func initialize(dbPath: String, deviceId: String) -> Result<Void, ReaderError> {
+    public func initialize(dbPath: String, deviceId: String, baseURL: String? = nil) -> Result<Void, ReaderError> {
         failOrSucceed(())
     }
 
     public func destroy() -> Result<Void, ReaderError> {
+        failOrSucceed(())
+    }
+
+    public func authRegister(username: String, email: String, password: String) -> Result<String, ReaderError> {
+        failOrSucceed("mock-user-id")
+    }
+
+    public func authLoginWithMetadata(
+        credential: String,
+        password: String,
+        deviceName: String?,
+        platform: String?
+    ) -> Result<String, ReaderError> {
+        failOrSucceed("{\"access_token\":\"mock-token\"}")
+    }
+
+    public func authLogout() -> Result<Void, ReaderError> {
+        failOrSucceed(())
+    }
+
+    public func authGetState() -> Int32 {
+        shouldFail ? 3 : 0
+    }
+
+    public func authChangePassword(oldPassword: String, newPassword: String) -> Result<Void, ReaderError> {
+        failOrSucceed(())
+    }
+
+    public func authListDevices() -> Result<String, ReaderError> {
+        failOrSucceed("[]")
+    }
+
+    public func authRemoveDevice(deviceId: String) -> Result<Void, ReaderError> {
+        failOrSucceed(())
+    }
+
+    public func setAuthCallback(_ callback: (@convention(c) (Int32) -> Void)?) -> Result<Void, ReaderError> {
+        failOrSucceed(())
+    }
+
+    public func syncFull() -> Result<Void, ReaderError> {
+        failOrSucceed(())
+    }
+
+    public func syncStartScheduler() -> Result<Void, ReaderError> {
+        failOrSucceed(())
+    }
+
+    public func syncStopScheduler() -> Result<Void, ReaderError> {
+        failOrSucceed(())
+    }
+
+    public func setSyncCallback(_ callback: (@convention(c) (Int32) -> Void)?) -> Result<Void, ReaderError> {
         failOrSucceed(())
     }
 

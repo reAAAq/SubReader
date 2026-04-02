@@ -14,6 +14,9 @@ public enum ReaderError: Int32, Error, Sendable {
     case notFound       = -5   // FFI_ERR_NOT_FOUND
     case alreadyInit    = -6   // FFI_ERR_ALREADY_INIT
     case notInit        = -7   // FFI_ERR_NOT_INIT
+    case authError      = -10  // FFI_ERR_AUTH
+    case networkError   = -11  // FFI_ERR_NETWORK
+    case syncError      = -12  // FFI_ERR_SYNC
     case panic          = -98  // FFI_ERR_PANIC
     case unknown        = -99  // FFI_ERR_UNKNOWN
 
@@ -34,6 +37,9 @@ extension ReaderError: LocalizedError {
         case .notFound:     return "Requested resource not found"
         case .alreadyInit:  return "Engine already initialized"
         case .notInit:      return "Engine not initialized"
+        case .authError:    return "Authentication error"
+        case .networkError: return "Network error"
+        case .syncError:    return "Sync error"
         case .panic:        return "Internal engine panic"
         case .unknown:      return "Unknown engine error"
         }

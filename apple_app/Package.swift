@@ -37,7 +37,8 @@ let package = Package(
                 .enableExperimentalFeature("StrictConcurrency")
             ],
             linkerSettings: [
-                .unsafeFlags(["-L", "SubReader/Vendor"])
+                .unsafeFlags(["-L", "SubReader/Vendor"]),
+                .linkedFramework("SystemConfiguration"),
             ]
         ),
 
