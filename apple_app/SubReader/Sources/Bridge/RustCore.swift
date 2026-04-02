@@ -34,17 +34,32 @@ public final class RustCore: ReaderEngineProtocol, @unchecked Sendable {
 
     // MARK: - Engine Lifecycle
 
-    public func initialize(dbPath: String, deviceId: String) -> Result<Void, ReaderError> {
+    public func initialize(dbPath: String, deviceId: String, baseURL: String? = nil) -> Result<Void, ReaderError> {
         ffiQueue.sync {
             let start = CFAbsoluteTimeGetCurrent()
             let code = dbPath.withCString { dbPathCStr in
                 deviceId.withCString { deviceIdCStr in
-                    reader_engine_init(
-                        UnsafeRawPointer(dbPathCStr).assumingMemoryBound(to: UInt8.self),
-                        UInt32(dbPath.utf8.count),
-                        UnsafeRawPointer(deviceIdCStr).assumingMemoryBound(to: UInt8.self),
-                        UInt32(deviceId.utf8.count)
-                    )
+                    if let baseURL = baseURL {
+                        return baseURL.withCString { baseURLCStr in
+                            reader_engine_init(
+                                UnsafeRawPointer(dbPathCStr).assumingMemoryBound(to: UInt8.self),
+                                UInt32(dbPath.utf8.count),
+                                UnsafeRawPointer(deviceIdCStr).assumingMemoryBound(to: UInt8.self),
+                                UInt32(deviceId.utf8.count),
+                                UnsafeRawPointer(baseURLCStr).assumingMemoryBound(to: UInt8.self),
+                                UInt32(baseURL.utf8.count)
+                            )
+                        }
+                    } else {
+                        return reader_engine_init(
+                            UnsafeRawPointer(dbPathCStr).assumingMemoryBound(to: UInt8.self),
+                            UInt32(dbPath.utf8.count),
+                            UnsafeRawPointer(deviceIdCStr).assumingMemoryBound(to: UInt8.self),
+                            UInt32(deviceId.utf8.count),
+                            nil,
+                            0
+                        )
+                    }
                 }
             }
             let elapsed = (CFAbsoluteTimeGetCurrent() - start) * 1000
@@ -450,6 +465,335 @@ public final class RustCore: ReaderEngineProtocol, @unchecked Sendable {
         } catch {
             Self.logger.error("JSON decode failed: \(error.localizedDescription)")
             return .failure(.parseFailed)
+        }
+    }
+
+    // MARK: - Auth Operations
+
+    /// Register a new user account. Returns user ID string.
+    public func authRegister(username: String, email: String, password: String) -> Result<String, ReaderError> {
+        ffiQueue.sync {
+            var outPtr: UnsafePointer<UInt8>?
+            var outLen: UInt32 = 0
+
+            let code = username.withCString { userCStr in
+                email.withCString { emailCStr in
+                    password.withCString { passCStr in
+                        reader_auth_register(
+                            UnsafeRawPointer(userCStr).assumingMemoryBound(to: UInt8.self),
+                            UInt32(username.utf8.count),
+                            UnsafeRawPointer(emailCStr).assumingMemoryBound(to: UInt8.self),
+                            UInt32(email.utf8.count),
+                            UnsafeRawPointer(passCStr).assumingMemoryBound(to: UInt8.self),
+                            UInt32(password.utf8.count),
+                            &outPtr,
+                            &outLen
+                        )
+                    }
+                }
+            }
+
+            if let error = ReaderError.from(code: code) {
+                return .failure(error)
+            }
+
+            guard let ptr = outPtr, outLen > 0 else {
+                return .failure(.nullPointer)
+            }
+            let str = String(bytes: Data(bytes: ptr, count: Int(outLen)), encoding: .utf8) ?? ""
+            return .success(str)
+        }
+    }
+
+    /// Login with credentials. Returns token JSON string.
+    public func authLogin(credential: String, password: String) -> Result<String, ReaderError> {
+        ffiQueue.sync {
+            var outPtr: UnsafePointer<UInt8>?
+            var outLen: UInt32 = 0
+
+            let code = credential.withCString { credCStr in
+                password.withCString { passCStr in
+                    reader_auth_login(
+                        UnsafeRawPointer(credCStr).assumingMemoryBound(to: UInt8.self),
+                        UInt32(credential.utf8.count),
+                        UnsafeRawPointer(passCStr).assumingMemoryBound(to: UInt8.self),
+                        UInt32(password.utf8.count),
+                        &outPtr,
+                        &outLen
+                    )
+                }
+            }
+
+            if let error = ReaderError.from(code: code) {
+                return .failure(error)
+            }
+
+            guard let ptr = outPtr, outLen > 0 else {
+                return .failure(.nullPointer)
+            }
+            let str = String(bytes: Data(bytes: ptr, count: Int(outLen)), encoding: .utf8) ?? ""
+            return .success(str)
+        }
+    }
+
+    /// Login with credentials and device metadata. Returns token JSON string.
+    public func authLoginWithMetadata(
+        credential: String,
+        password: String,
+        deviceName: String?,
+        platform: String?
+    ) -> Result<String, ReaderError> {
+        ffiQueue.sync {
+            var outPtr: UnsafePointer<UInt8>?
+            var outLen: UInt32 = 0
+
+            let code = credential.withCString { credCStr in
+                password.withCString { passCStr in
+                    let deviceNamePtr: UnsafePointer<UInt8>?
+                    let deviceNameLen: UInt32
+                    let platformPtr: UnsafePointer<UInt8>?
+                    let platformLen: UInt32
+
+                    // We need to keep the C strings alive for the duration of the call
+                    let dnData = deviceName?.utf8CString
+                    let pData = platform?.utf8CString
+
+                    if let dn = dnData {
+                        deviceNamePtr = dn.withUnsafeBufferPointer { buf in
+                            buf.baseAddress?.withMemoryRebound(to: UInt8.self, capacity: dn.count - 1) { $0 }
+                        }
+                        deviceNameLen = UInt32(deviceName!.utf8.count)
+                    } else {
+                        deviceNamePtr = nil
+                        deviceNameLen = 0
+                    }
+
+                    if let p = pData {
+                        platformPtr = p.withUnsafeBufferPointer { buf in
+                            buf.baseAddress?.withMemoryRebound(to: UInt8.self, capacity: p.count - 1) { $0 }
+                        }
+                        platformLen = UInt32(platform!.utf8.count)
+                    } else {
+                        platformPtr = nil
+                        platformLen = 0
+                    }
+
+                    return reader_auth_login_with_metadata(
+                        UnsafeRawPointer(credCStr).assumingMemoryBound(to: UInt8.self),
+                        UInt32(credential.utf8.count),
+                        UnsafeRawPointer(passCStr).assumingMemoryBound(to: UInt8.self),
+                        UInt32(password.utf8.count),
+                        deviceNamePtr,
+                        deviceNameLen,
+                        platformPtr,
+                        platformLen,
+                        &outPtr,
+                        &outLen
+                    )
+                }
+            }
+
+            if let error = ReaderError.from(code: code) {
+                return .failure(error)
+            }
+
+            guard let ptr = outPtr, outLen > 0 else {
+                return .failure(.nullPointer)
+            }
+            let str = String(bytes: Data(bytes: ptr, count: Int(outLen)), encoding: .utf8) ?? ""
+            return .success(str)
+        }
+    }
+
+    /// Logout the current session.
+    public func authLogout() -> Result<Void, ReaderError> {
+        ffiQueue.sync {
+            let code = reader_auth_logout()
+            if let error = ReaderError.from(code: code) {
+                return .failure(error)
+            }
+            return .success(())
+        }
+    }
+
+    /// Get current auth state (0=LoggedOut, 1=Authenticated, 2=NeedsRefresh, 3=NeedsReLogin).
+    public func authGetState() -> Int32 {
+        ffiQueue.sync {
+            reader_auth_get_state()
+        }
+    }
+
+    /// Get a valid access token (auto-refreshes if needed).
+    public func authGetToken() -> Result<String, ReaderError> {
+        ffiQueue.sync {
+            var outPtr: UnsafePointer<UInt8>?
+            var outLen: UInt32 = 0
+
+            let code = reader_auth_get_token(&outPtr, &outLen)
+            if let error = ReaderError.from(code: code) {
+                return .failure(error)
+            }
+
+            guard let ptr = outPtr, outLen > 0 else {
+                return .failure(.nullPointer)
+            }
+            let str = String(bytes: Data(bytes: ptr, count: Int(outLen)), encoding: .utf8) ?? ""
+            return .success(str)
+        }
+    }
+
+    /// Explicitly refresh the access token. Returns new token JSON.
+    public func authRefreshToken() -> Result<String, ReaderError> {
+        ffiQueue.sync {
+            var outPtr: UnsafePointer<UInt8>?
+            var outLen: UInt32 = 0
+
+            let code = reader_auth_refresh_token(&outPtr, &outLen)
+            if let error = ReaderError.from(code: code) {
+                return .failure(error)
+            }
+
+            guard let ptr = outPtr, outLen > 0 else {
+                return .failure(.nullPointer)
+            }
+            let str = String(bytes: Data(bytes: ptr, count: Int(outLen)), encoding: .utf8) ?? ""
+            return .success(str)
+        }
+    }
+
+    /// Change the current user's password.
+    public func authChangePassword(oldPassword: String, newPassword: String) -> Result<Void, ReaderError> {
+        ffiQueue.sync {
+            let code = oldPassword.withCString { oldCStr in
+                newPassword.withCString { newCStr in
+                    reader_auth_change_password(
+                        UnsafeRawPointer(oldCStr).assumingMemoryBound(to: UInt8.self),
+                        UInt32(oldPassword.utf8.count),
+                        UnsafeRawPointer(newCStr).assumingMemoryBound(to: UInt8.self),
+                        UInt32(newPassword.utf8.count)
+                    )
+                }
+            }
+
+            if let error = ReaderError.from(code: code) {
+                return .failure(error)
+            }
+            return .success(())
+        }
+    }
+
+    /// List devices for the current user. Returns JSON string.
+    public func authListDevices() -> Result<String, ReaderError> {
+        ffiQueue.sync {
+            var outPtr: UnsafePointer<UInt8>?
+            var outLen: UInt32 = 0
+
+            let code = reader_auth_list_devices(&outPtr, &outLen)
+            if let error = ReaderError.from(code: code) {
+                return .failure(error)
+            }
+
+            guard let ptr = outPtr, outLen > 0 else {
+                return .failure(.nullPointer)
+            }
+            let str = String(bytes: Data(bytes: ptr, count: Int(outLen)), encoding: .utf8) ?? ""
+            return .success(str)
+        }
+    }
+
+    /// Remove a device from the current user's device list.
+    public func authRemoveDevice(deviceId: String) -> Result<Void, ReaderError> {
+        ffiQueue.sync {
+            let code = deviceId.withCString { idCStr in
+                reader_auth_remove_device(
+                    UnsafeRawPointer(idCStr).assumingMemoryBound(to: UInt8.self),
+                    UInt32(deviceId.utf8.count)
+                )
+            }
+
+            if let error = ReaderError.from(code: code) {
+                return .failure(error)
+            }
+            return .success(())
+        }
+    }
+
+    /// Set the auth state change callback.
+    public func setAuthCallback(_ callback: (@convention(c) (Int32) -> Void)?) -> Result<Void, ReaderError> {
+        ffiQueue.sync {
+            let code = reader_set_auth_callback(callback)
+            if let error = ReaderError.from(code: code) {
+                return .failure(error)
+            }
+            return .success(())
+        }
+    }
+
+    // MARK: - Sync Operations
+
+    /// Push local pending operations to the server.
+    public func syncPush() -> Result<Void, ReaderError> {
+        ffiQueue.sync {
+            let code = reader_sync_push()
+            if let error = ReaderError.from(code: code) {
+                return .failure(error)
+            }
+            return .success(())
+        }
+    }
+
+    /// Pull remote operations from the server.
+    public func syncPull() -> Result<Void, ReaderError> {
+        ffiQueue.sync {
+            let code = reader_sync_pull()
+            if let error = ReaderError.from(code: code) {
+                return .failure(error)
+            }
+            return .success(())
+        }
+    }
+
+    /// Perform a full sync (push + pull).
+    public func syncFull() -> Result<Void, ReaderError> {
+        ffiQueue.sync {
+            let code = reader_sync_full()
+            if let error = ReaderError.from(code: code) {
+                return .failure(error)
+            }
+            return .success(())
+        }
+    }
+
+    /// Start the background sync scheduler.
+    public func syncStartScheduler() -> Result<Void, ReaderError> {
+        ffiQueue.sync {
+            let code = reader_sync_start_scheduler()
+            if let error = ReaderError.from(code: code) {
+                return .failure(error)
+            }
+            return .success(())
+        }
+    }
+
+    /// Stop the background sync scheduler.
+    public func syncStopScheduler() -> Result<Void, ReaderError> {
+        ffiQueue.sync {
+            let code = reader_sync_stop_scheduler()
+            if let error = ReaderError.from(code: code) {
+                return .failure(error)
+            }
+            return .success(())
+        }
+    }
+
+    /// Set the sync state change callback.
+    public func setSyncCallback(_ callback: (@convention(c) (Int32) -> Void)?) -> Result<Void, ReaderError> {
+        ffiQueue.sync {
+            let code = reader_set_sync_callback(callback)
+            if let error = ReaderError.from(code: code) {
+                return .failure(error)
+            }
+            return .success(())
         }
     }
 }
