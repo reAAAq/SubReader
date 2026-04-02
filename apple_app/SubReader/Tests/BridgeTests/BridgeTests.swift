@@ -15,6 +15,9 @@ final class ReaderErrorTests: XCTestCase {
         XCTAssertEqual(ReaderError.from(code: -5), .notFound)
         XCTAssertEqual(ReaderError.from(code: -6), .alreadyInit)
         XCTAssertEqual(ReaderError.from(code: -7), .notInit)
+        XCTAssertEqual(ReaderError.from(code: -10), .authError)
+        XCTAssertEqual(ReaderError.from(code: -11), .networkError)
+        XCTAssertEqual(ReaderError.from(code: -12), .syncError)
         XCTAssertEqual(ReaderError.from(code: -98), .panic)
         XCTAssertEqual(ReaderError.from(code: -99), .unknown)
     }
@@ -43,7 +46,7 @@ final class MockEngineTests: XCTestCase {
     func testMockEngineFailMode() {
         let mock = MockReaderEngine()
         mock.shouldFail = true
-        let result = mock.initialize(dbPath: "/tmp/test.db", deviceId: "test")
+        let result = mock.initialize(dbPath: "/tmp/test.db", deviceId: "test", baseURL: nil)
         XCTAssertThrowsError(try result.get())
     }
 

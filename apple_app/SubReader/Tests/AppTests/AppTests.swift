@@ -112,8 +112,20 @@ private final class CountingReaderEngine: @unchecked Sendable, ReaderEngineProto
     var listBookmarksCallCount = 0
     var listAnnotationsCallCount = 0
 
-    func initialize(dbPath: String, deviceId: String) -> Result<Void, ReaderError> { .success(()) }
+    func initialize(dbPath: String, deviceId: String, baseURL: String?) -> Result<Void, ReaderError> { .success(()) }
     func destroy() -> Result<Void, ReaderError> { .success(()) }
+    func authRegister(username: String, email: String, password: String) -> Result<String, ReaderError> { .failure(.authError) }
+    func authLoginWithMetadata(credential: String, password: String, deviceName: String?, platform: String?) -> Result<String, ReaderError> { .failure(.authError) }
+    func authLogout() -> Result<Void, ReaderError> { .success(()) }
+    func authGetState() -> Int32 { 0 }
+    func authChangePassword(oldPassword: String, newPassword: String) -> Result<Void, ReaderError> { .failure(.authError) }
+    func authListDevices() -> Result<String, ReaderError> { .failure(.authError) }
+    func authRemoveDevice(deviceId: String) -> Result<Void, ReaderError> { .failure(.authError) }
+    func setAuthCallback(_ callback: (@convention(c) (Int32) -> Void)?) -> Result<Void, ReaderError> { .success(()) }
+    func syncFull() -> Result<Void, ReaderError> { .success(()) }
+    func syncStartScheduler() -> Result<Void, ReaderError> { .success(()) }
+    func syncStopScheduler() -> Result<Void, ReaderError> { .success(()) }
+    func setSyncCallback(_ callback: (@convention(c) (Int32) -> Void)?) -> Result<Void, ReaderError> { .success(()) }
     func openBook(data: Data) -> Result<Void, ReaderError> { .success(()) }
     func closeBook() -> Result<Void, ReaderError> { .success(()) }
     func getMetadata() -> Result<BookMetadata, ReaderError> { .failure(.notFound) }
