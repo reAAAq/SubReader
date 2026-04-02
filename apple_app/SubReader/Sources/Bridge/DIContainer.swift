@@ -12,18 +12,24 @@ public final class DIContainer: ObservableObject {
     /// The reader engine instance (protocol-typed for testability).
     public let engine: any ReaderEngineProtocol
 
+    /// Authentication service.
+    public let authService: AuthService
+
+    /// Sync service.
+    public let syncService: SyncService
+
     /// Chapter content cache (keyed by book and chapter identity).
     public let chapterCache = ChapterCache()
 
     /// Cover image cache (memory + disk).
     public let coverCache = CoverImageCache()
 
-    /// Shared instance for the app.
-    public static let shared = DIContainer()
-
     /// Initialize with a specific engine (for testing).
     public init(engine: any ReaderEngineProtocol = RustCore()) {
         self.engine = engine
+        let auth = AuthService(engine: engine)
+        self.authService = auth
+        self.syncService = SyncService(engine: engine, authService: auth)
     }
 }
 
