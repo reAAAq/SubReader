@@ -6,14 +6,16 @@
 
 use std::panic::catch_unwind;
 use std::slice;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use core_parser::EpubParser;
 use core_parser::TxtParser;
 use core_state::StateManager;
 use shared_types::{Annotation, Bookmark};
 
-use core_auth::AuthProvider;
+use core_auth::http_auth::HttpAuthProvider;
+use core_auth::token_store::FileTokenStore;
+use core_auth::AuthManager;
 
 // ─── FFI Error Codes ─────────────────────────────────────────────────────────
 
@@ -72,16 +74,22 @@ fn set_return_buffer(engine: &mut EngineState, s: String) -> (*const u8, u32) {
 
 // ─── Engine Lifecycle ────────────────────────────────────────────────────────
 
-/// Initialize the reader engine with a database path.
+/// Initialize the reader engine with a database path and optional backend URL.
+///
+/// If `base_url_ptr` is non-null, an `AuthManager` will be created for authentication.
+/// The token file is stored alongside the database as `<db_dir>/auth_token.json`.
 ///
 /// # Safety
 /// `db_path_ptr` must point to valid UTF-8 bytes of length `db_path_len`.
+/// `base_url_ptr` may be null (auth disabled) or must point to valid UTF-8 bytes.
 #[no_mangle]
 pub unsafe extern "C" fn reader_engine_init(
     db_path_ptr: *const u8,
     db_path_len: u32,
     device_id_ptr: *const u8,
     device_id_len: u32,
+    base_url_ptr: *const u8,
+    base_url_len: u32,
 ) -> i32 {
     catch_unwind(|| {
         let db_path = match unsafe { ptr_to_str(db_path_ptr, db_path_len) } {
@@ -110,6 +118,82 @@ pub unsafe extern "C" fn reader_engine_init(
                     return_buffer: String::new(),
                     binary_buffer: Vec::new(),
                 });
+
+                // Reset auth/sync globals for this engine instance.
+                if let Ok(mut guard) = SYNC_SCHEDULER.lock() {
+                    *guard = None;
+                } else {
+                    return FFI_ERR_UNKNOWN;
+                }
+
+                if let Ok(mut guard) = AUTH_MANAGER.lock() {
+                    *guard = None;
+                } else {
+                    return FFI_ERR_UNKNOWN;
+                }
+
+                if let Ok(mut guard) = BASE_URL.lock() {
+                    *guard = None;
+                } else {
+                    return FFI_ERR_UNKNOWN;
+                }
+
+                // Initialize AuthManager if base_url is provided
+                if !base_url_ptr.is_null() && base_url_len > 0 {
+                    let base_url = match unsafe { ptr_to_str(base_url_ptr, base_url_len) } {
+                        Ok(s) => s,
+                        Err(code) => return code,
+                    };
+
+                    let provider = HttpAuthProvider::new(base_url);
+
+                    if let Ok(mut guard) = BASE_URL.lock() {
+                        *guard = Some(base_url.to_string());
+                    } else {
+                        return FFI_ERR_UNKNOWN;
+                    }
+
+                    // Store token file next to the database
+                    let db_dir = std::path::Path::new(db_path)
+                        .parent()
+                        .unwrap_or(std::path::Path::new("."));
+                    let token_path = db_dir.join("auth_token.json");
+                    let store = FileTokenStore::new(token_path);
+
+                    let auth_mgr = Arc::new(AuthManager::new(
+                        provider,
+                        store,
+                        device_id.to_string(),
+                    ));
+
+                    if let Ok(mut guard) = AUTH_MANAGER.lock() {
+                        *guard = Some(Arc::clone(&auth_mgr));
+                    } else {
+                        return FFI_ERR_UNKNOWN;
+                    }
+
+                    // Fire initial auth state callback
+                    let rt = match get_runtime() {
+                        Ok(rt) => rt,
+                        Err(_) => return FFI_OK, // Engine init succeeded, auth callback is best-effort
+                    };
+                    let state = rt.block_on(auth_mgr.state());
+                    fire_auth_callback(&state);
+
+                    // If we have a persisted token, try background refresh
+                    if matches!(state, core_auth::AuthState::NeedsRefresh) {
+                        let rt_handle = rt.handle().clone();
+                        std::thread::spawn(move || {
+                            let result = rt_handle.block_on(auth_mgr.refresh());
+                            let new_state = rt_handle.block_on(auth_mgr.state());
+                            fire_auth_callback(&new_state);
+                            if let Err(e) = result {
+                                eprintln!("[ffi_c] Background token refresh failed: {}", e);
+                            }
+                        });
+                    }
+                }
+
                 FFI_OK
             }
             Err(_) => FFI_ERR_STORAGE,
@@ -125,6 +209,41 @@ pub unsafe extern "C" fn reader_engine_init(
 #[no_mangle]
 pub unsafe extern "C" fn reader_engine_destroy() -> i32 {
     catch_unwind(|| {
+        let rt = match get_runtime() {
+            Ok(rt) => Some(rt),
+            Err(_) => None,
+        };
+
+        {
+            let mut guard = match SYNC_SCHEDULER.lock() {
+                Ok(g) => g,
+                Err(_) => return FFI_ERR_UNKNOWN,
+            };
+
+            if let Some(scheduler) = guard.as_mut() {
+                if let Some(rt) = rt {
+                    rt.block_on(scheduler.stop());
+                }
+            }
+            *guard = None;
+        }
+
+        {
+            let mut guard = match AUTH_MANAGER.lock() {
+                Ok(g) => g,
+                Err(_) => return FFI_ERR_UNKNOWN,
+            };
+            *guard = None;
+        }
+
+        {
+            let mut guard = match BASE_URL.lock() {
+                Ok(g) => g,
+                Err(_) => return FFI_ERR_UNKNOWN,
+            };
+            *guard = None;
+        }
+
         let mut guard = match ENGINE.lock() {
             Ok(g) => g,
             Err(_) => return FFI_ERR_UNKNOWN,
@@ -888,9 +1007,17 @@ pub type SyncCallbackFn = Option<extern "C" fn(i32)>;
 static AUTH_CALLBACK: Mutex<AuthCallbackFn> = Mutex::new(None);
 static SYNC_CALLBACK: Mutex<SyncCallbackFn> = Mutex::new(None);
 
+/// Global AuthManager instance, initialized during `reader_engine_init`.
+/// Uses concrete types: HttpAuthProvider for network calls, FileTokenStore for persistence.
+static AUTH_MANAGER: Mutex<Option<Arc<AuthManager<HttpAuthProvider, FileTokenStore>>>> =
+    Mutex::new(None);
+
 /// Tokio runtime for async operations.
 /// Uses `OnceLock` to avoid Mutex ordering issues with ENGINE.
 static TOKIO_RT: std::sync::OnceLock<tokio::runtime::Runtime> = std::sync::OnceLock::new();
+
+/// Global base_url storage, set during `reader_engine_init`.
+static BASE_URL: Mutex<Option<String>> = Mutex::new(None);
 
 /// Ensure the tokio runtime is initialized and return a reference to it.
 fn get_runtime() -> Result<&'static tokio::runtime::Runtime, i32> {
@@ -906,16 +1033,68 @@ fn get_runtime() -> Result<&'static tokio::runtime::Runtime, i32> {
     }
 }
 
+/// Get a cloned handle to the global AuthManager, or return FFI_ERR_NOT_INIT.
+fn get_auth_manager() -> Result<Arc<AuthManager<HttpAuthProvider, FileTokenStore>>, i32> {
+    let guard = AUTH_MANAGER.lock().map_err(|_| FFI_ERR_UNKNOWN)?;
+    guard.clone().ok_or(FFI_ERR_NOT_INIT)
+}
+
+fn current_base_url() -> Result<String, i32> {
+    let guard = BASE_URL.lock().map_err(|_| FFI_ERR_UNKNOWN)?;
+    guard.clone().ok_or(FFI_ERR_NOT_INIT)
+}
+
+type FfiSyncEngine = SyncEngine<StorageAdapter, NetworkSyncAdapter<HttpTransport>>;
+
+fn build_sync_engine() -> Result<FfiSyncEngine, i32> {
+    let base_url = current_base_url()?;
+    let transport = HttpTransport::new(&base_url);
+    let adapter = NetworkSyncAdapter::new(transport);
+    let storage = StorageAdapter;
+
+    // Use a simple node_id; AuthManager doesn't expose device_id directly.
+    let node_id: u32 = 1;
+
+    Ok(SyncEngine::new(storage, adapter, "ffi".to_string(), node_id))
+}
+
+/// Convert an AuthState to its FFI i32 representation.
+fn auth_state_to_i32(state: &core_auth::AuthState) -> i32 {
+    match state {
+        core_auth::AuthState::LoggedOut => 0,
+        core_auth::AuthState::Authenticated { .. } => 1,
+        core_auth::AuthState::NeedsRefresh => 2,
+        core_auth::AuthState::NeedsReLogin => 3,
+    }
+}
+
+/// Fire the auth callback with the current auth state.
+fn fire_auth_callback(state: &core_auth::AuthState) {
+    let code = auth_state_to_i32(state);
+    if let Ok(guard) = AUTH_CALLBACK.lock() {
+        if let Some(cb) = *guard {
+            cb(code);
+        }
+    }
+}
+
+/// Map an AuthError to an FFI error code.
+fn auth_error_to_ffi(err: &core_auth::AuthError) -> i32 {
+    match err {
+        core_auth::AuthError::NetworkError(_) => FFI_ERR_NETWORK,
+        _ => FFI_ERR_AUTH,
+    }
+}
+
 // ─── Auth FFI Functions ──────────────────────────────────────────────────────
 
 /// Register a new user account.
+/// Uses the global AuthManager initialized during `reader_engine_init`.
 ///
 /// # Safety
 /// All pointer parameters must be valid UTF-8 strings.
 #[no_mangle]
 pub unsafe extern "C" fn reader_auth_register(
-    base_url_ptr: *const u8,
-    base_url_len: u32,
     username_ptr: *const u8,
     username_len: u32,
     email_ptr: *const u8,
@@ -926,10 +1105,6 @@ pub unsafe extern "C" fn reader_auth_register(
     out_len: *mut u32,
 ) -> i32 {
     catch_unwind(|| {
-        let base_url = match unsafe { ptr_to_str(base_url_ptr, base_url_len) } {
-            Ok(s) => s,
-            Err(code) => return code,
-        };
         let username = match unsafe { ptr_to_str(username_ptr, username_len) } {
             Ok(s) => s,
             Err(code) => return code,
@@ -952,14 +1127,18 @@ pub unsafe extern "C" fn reader_auth_register(
             Err(code) => return code,
         };
 
-        let provider = core_auth::http_auth::HttpAuthProvider::new(base_url);
+        let mgr = match get_auth_manager() {
+            Ok(m) => m,
+            Err(code) => return code,
+        };
+
         let req = core_auth::RegisterRequest {
             username: username.to_string(),
             email: email.to_string(),
             password: password.to_string(),
         };
 
-        match rt.block_on(provider.register(&req)) {
+        match rt.block_on(mgr.register(&req)) {
             Ok(user_id) => {
                 let mut guard = match ENGINE.lock() {
                     Ok(g) => g,
@@ -976,21 +1155,17 @@ pub unsafe extern "C" fn reader_auth_register(
                 }
                 FFI_OK
             }
-            Err(_) => FFI_ERR_AUTH,
+            Err(e) => auth_error_to_ffi(&e),
         }
     })
     .unwrap_or(FFI_ERR_PANIC)
 }
 
 fn auth_login_impl(
-    base_url_ptr: *const u8,
-    base_url_len: u32,
     credential_ptr: *const u8,
     credential_len: u32,
     password_ptr: *const u8,
     password_len: u32,
-    device_id_ptr: *const u8,
-    device_id_len: u32,
     device_name_ptr: *const u8,
     device_name_len: u32,
     platform_ptr: *const u8,
@@ -999,10 +1174,6 @@ fn auth_login_impl(
     out_len: *mut u32,
 ) -> i32 {
     catch_unwind(|| {
-        let base_url = match unsafe { ptr_to_str(base_url_ptr, base_url_len) } {
-            Ok(s) => s,
-            Err(code) => return code,
-        };
         let credential = match unsafe { ptr_to_str(credential_ptr, credential_len) } {
             Ok(s) => s,
             Err(code) => return code,
@@ -1011,15 +1182,11 @@ fn auth_login_impl(
             Ok(s) => s,
             Err(code) => return code,
         };
-        let device_id = match unsafe { ptr_to_str(device_id_ptr, device_id_len) } {
-            Ok(s) => s,
-            Err(code) => return code,
-        };
         let device_name = if device_name_ptr.is_null() {
             None
         } else {
             match unsafe { ptr_to_str(device_name_ptr, device_name_len) } {
-                Ok(s) => Some(s.to_string()),
+                Ok(s) => Some(s),
                 Err(code) => return code,
             }
         };
@@ -1027,7 +1194,7 @@ fn auth_login_impl(
             None
         } else {
             match unsafe { ptr_to_str(platform_ptr, platform_len) } {
-                Ok(s) => Some(s.to_string()),
+                Ok(s) => Some(s),
                 Err(code) => return code,
             }
         };
@@ -1041,17 +1208,17 @@ fn auth_login_impl(
             Err(code) => return code,
         };
 
-        let provider = core_auth::http_auth::HttpAuthProvider::new(base_url);
-        let req = core_auth::LoginRequest {
-            credential: credential.to_string(),
-            password: password.to_string(),
-            device_id: device_id.to_string(),
-            device_name,
-            platform,
+        let mgr = match get_auth_manager() {
+            Ok(m) => m,
+            Err(code) => return code,
         };
 
-        match rt.block_on(provider.login(&req)) {
+        match rt.block_on(mgr.login(credential, password, device_name, platform)) {
             Ok(token) => {
+                // Notify auth state change
+                let state = rt.block_on(mgr.state());
+                fire_auth_callback(&state);
+
                 let json = match serde_json::to_string(&token) {
                     Ok(j) => j,
                     Err(_) => return FFI_ERR_UNKNOWN,
@@ -1071,38 +1238,31 @@ fn auth_login_impl(
                 }
                 FFI_OK
             }
-            Err(_) => FFI_ERR_AUTH,
+            Err(e) => auth_error_to_ffi(&e),
         }
     })
     .unwrap_or(FFI_ERR_PANIC)
 }
 
 /// Login with credentials. Returns JSON with token info.
+/// Uses the global AuthManager; device_id is already stored in AuthManager.
 ///
 /// # Safety
 /// All pointer parameters must be valid.
 #[no_mangle]
 pub unsafe extern "C" fn reader_auth_login(
-    base_url_ptr: *const u8,
-    base_url_len: u32,
     credential_ptr: *const u8,
     credential_len: u32,
     password_ptr: *const u8,
     password_len: u32,
-    device_id_ptr: *const u8,
-    device_id_len: u32,
     out_ptr: *mut *const u8,
     out_len: *mut u32,
 ) -> i32 {
     auth_login_impl(
-        base_url_ptr,
-        base_url_len,
         credential_ptr,
         credential_len,
         password_ptr,
         password_len,
-        device_id_ptr,
-        device_id_len,
         std::ptr::null(),
         0,
         std::ptr::null(),
@@ -1113,19 +1273,16 @@ pub unsafe extern "C" fn reader_auth_login(
 }
 
 /// Login with credentials and optional device metadata. Returns JSON with token info.
+/// Uses the global AuthManager; device_id is already stored in AuthManager.
 ///
 /// # Safety
 /// All non-null pointer parameters must be valid.
 #[no_mangle]
 pub unsafe extern "C" fn reader_auth_login_with_metadata(
-    base_url_ptr: *const u8,
-    base_url_len: u32,
     credential_ptr: *const u8,
     credential_len: u32,
     password_ptr: *const u8,
     password_len: u32,
-    device_id_ptr: *const u8,
-    device_id_len: u32,
     device_name_ptr: *const u8,
     device_name_len: u32,
     platform_ptr: *const u8,
@@ -1134,14 +1291,10 @@ pub unsafe extern "C" fn reader_auth_login_with_metadata(
     out_len: *mut u32,
 ) -> i32 {
     auth_login_impl(
-        base_url_ptr,
-        base_url_len,
         credential_ptr,
         credential_len,
         password_ptr,
         password_len,
-        device_id_ptr,
-        device_id_len,
         device_name_ptr,
         device_name_len,
         platform_ptr,
@@ -1152,22 +1305,190 @@ pub unsafe extern "C" fn reader_auth_login_with_metadata(
 }
 
 /// Logout the current session.
+/// Uses the global AuthManager to clear tokens and update state.
 ///
 /// # Safety
-/// All pointer parameters must be valid.
+/// No pointer parameters required.
 #[no_mangle]
-pub unsafe extern "C" fn reader_auth_logout(
-    base_url_ptr: *const u8,
-    base_url_len: u32,
-    access_token_ptr: *const u8,
-    access_token_len: u32,
+pub unsafe extern "C" fn reader_auth_logout() -> i32 {
+    catch_unwind(|| {
+        let rt = match get_runtime() {
+            Ok(rt) => rt,
+            Err(code) => return code,
+        };
+
+        let mgr = match get_auth_manager() {
+            Ok(m) => m,
+            Err(code) => return code,
+        };
+
+        match rt.block_on(mgr.logout()) {
+            Ok(()) => {
+                let state = rt.block_on(mgr.state());
+                fire_auth_callback(&state);
+                FFI_OK
+            }
+            Err(e) => auth_error_to_ffi(&e),
+        }
+    })
+    .unwrap_or(FFI_ERR_PANIC)
+}
+
+/// Get the current authentication state.
+///
+/// Returns: 0=LoggedOut, 1=Authenticated, 2=NeedsRefresh, 3=NeedsReLogin.
+/// Returns FFI_ERR_NOT_INIT if AuthManager is not initialized.
+#[no_mangle]
+pub unsafe extern "C" fn reader_auth_get_state() -> i32 {
+    catch_unwind(|| {
+        let rt = match get_runtime() {
+            Ok(rt) => rt,
+            Err(code) => return code,
+        };
+
+        let mgr = match get_auth_manager() {
+            Ok(m) => m,
+            Err(code) => return code,
+        };
+
+        let state = rt.block_on(mgr.state());
+        auth_state_to_i32(&state)
+    })
+    .unwrap_or(FFI_ERR_PANIC)
+}
+
+/// Get a valid access token, auto-refreshing if needed.
+/// Returns the token string via out_ptr/out_len.
+///
+/// # Safety
+/// `out_ptr` and `out_len` must be valid pointers.
+#[no_mangle]
+pub unsafe extern "C" fn reader_auth_get_token(
+    out_ptr: *mut *const u8,
+    out_len: *mut u32,
 ) -> i32 {
     catch_unwind(|| {
-        let base_url = match unsafe { ptr_to_str(base_url_ptr, base_url_len) } {
+        if out_ptr.is_null() || out_len.is_null() {
+            return FFI_ERR_NULL_PTR;
+        }
+
+        let rt = match get_runtime() {
+            Ok(rt) => rt,
+            Err(code) => return code,
+        };
+
+        let mgr = match get_auth_manager() {
+            Ok(m) => m,
+            Err(code) => return code,
+        };
+
+        match rt.block_on(mgr.get_valid_token()) {
+            Ok(token) => {
+                // Fire callback in case state changed during refresh
+                let state = rt.block_on(mgr.state());
+                fire_auth_callback(&state);
+
+                let mut guard = match ENGINE.lock() {
+                    Ok(g) => g,
+                    Err(_) => return FFI_ERR_UNKNOWN,
+                };
+                let engine = match guard.as_mut() {
+                    Some(e) => e,
+                    None => return FFI_ERR_NOT_INIT,
+                };
+                let (ptr, len) = set_return_buffer(engine, token);
+                unsafe {
+                    *out_ptr = ptr;
+                    *out_len = len;
+                }
+                FFI_OK
+            }
+            Err(e) => {
+                let state = rt.block_on(mgr.state());
+                fire_auth_callback(&state);
+                auth_error_to_ffi(&e)
+            }
+        }
+    })
+    .unwrap_or(FFI_ERR_PANIC)
+}
+
+/// Explicitly refresh the access token.
+/// Returns the new token JSON via out_ptr/out_len.
+///
+/// # Safety
+/// `out_ptr` and `out_len` must be valid pointers.
+#[no_mangle]
+pub unsafe extern "C" fn reader_auth_refresh_token(
+    out_ptr: *mut *const u8,
+    out_len: *mut u32,
+) -> i32 {
+    catch_unwind(|| {
+        if out_ptr.is_null() || out_len.is_null() {
+            return FFI_ERR_NULL_PTR;
+        }
+
+        let rt = match get_runtime() {
+            Ok(rt) => rt,
+            Err(code) => return code,
+        };
+
+        let mgr = match get_auth_manager() {
+            Ok(m) => m,
+            Err(code) => return code,
+        };
+
+        match rt.block_on(mgr.refresh()) {
+            Ok(token) => {
+                let state = rt.block_on(mgr.state());
+                fire_auth_callback(&state);
+
+                let json = match serde_json::to_string(&token) {
+                    Ok(j) => j,
+                    Err(_) => return FFI_ERR_UNKNOWN,
+                };
+                let mut guard = match ENGINE.lock() {
+                    Ok(g) => g,
+                    Err(_) => return FFI_ERR_UNKNOWN,
+                };
+                let engine = match guard.as_mut() {
+                    Some(e) => e,
+                    None => return FFI_ERR_NOT_INIT,
+                };
+                let (ptr, len) = set_return_buffer(engine, json);
+                unsafe {
+                    *out_ptr = ptr;
+                    *out_len = len;
+                }
+                FFI_OK
+            }
+            Err(e) => {
+                let state = rt.block_on(mgr.state());
+                fire_auth_callback(&state);
+                auth_error_to_ffi(&e)
+            }
+        }
+    })
+    .unwrap_or(FFI_ERR_PANIC)
+}
+
+/// Change the current user's password.
+///
+/// # Safety
+/// All pointer parameters must be valid UTF-8 strings.
+#[no_mangle]
+pub unsafe extern "C" fn reader_auth_change_password(
+    old_password_ptr: *const u8,
+    old_password_len: u32,
+    new_password_ptr: *const u8,
+    new_password_len: u32,
+) -> i32 {
+    catch_unwind(|| {
+        let old_password = match unsafe { ptr_to_str(old_password_ptr, old_password_len) } {
             Ok(s) => s,
             Err(code) => return code,
         };
-        let access_token = match unsafe { ptr_to_str(access_token_ptr, access_token_len) } {
+        let new_password = match unsafe { ptr_to_str(new_password_ptr, new_password_len) } {
             Ok(s) => s,
             Err(code) => return code,
         };
@@ -1177,10 +1498,129 @@ pub unsafe extern "C" fn reader_auth_logout(
             Err(code) => return code,
         };
 
-        let provider = core_auth::http_auth::HttpAuthProvider::new(base_url);
-        match rt.block_on(provider.logout(access_token)) {
+        let mgr = match get_auth_manager() {
+            Ok(m) => m,
+            Err(code) => return code,
+        };
+
+        // Get a valid token first (auto-refresh if needed)
+        let access_token = match rt.block_on(mgr.get_valid_token()) {
+            Ok(t) => t,
+            Err(e) => {
+                let state = rt.block_on(mgr.state());
+                fire_auth_callback(&state);
+                return auth_error_to_ffi(&e);
+            }
+        };
+
+        // AuthManager now exposes change_password, list_devices, remove_device
+        // which delegate to the underlying provider.
+        match rt.block_on(mgr.change_password(&access_token, old_password, new_password)) {
             Ok(()) => FFI_OK,
-            Err(_) => FFI_ERR_AUTH,
+            Err(e) => auth_error_to_ffi(&e),
+        }
+    })
+    .unwrap_or(FFI_ERR_PANIC)
+}
+
+/// List devices for the current user.
+/// Returns JSON array via out_ptr/out_len.
+///
+/// # Safety
+/// `out_ptr` and `out_len` must be valid pointers.
+#[no_mangle]
+pub unsafe extern "C" fn reader_auth_list_devices(
+    out_ptr: *mut *const u8,
+    out_len: *mut u32,
+) -> i32 {
+    catch_unwind(|| {
+        if out_ptr.is_null() || out_len.is_null() {
+            return FFI_ERR_NULL_PTR;
+        }
+
+        let rt = match get_runtime() {
+            Ok(rt) => rt,
+            Err(code) => return code,
+        };
+
+        let mgr = match get_auth_manager() {
+            Ok(m) => m,
+            Err(code) => return code,
+        };
+
+        let access_token = match rt.block_on(mgr.get_valid_token()) {
+            Ok(t) => t,
+            Err(e) => {
+                let state = rt.block_on(mgr.state());
+                fire_auth_callback(&state);
+                return auth_error_to_ffi(&e);
+            }
+        };
+
+        match rt.block_on(mgr.list_devices(&access_token)) {
+            Ok(devices) => {
+                let json = match serde_json::to_string(&devices) {
+                    Ok(j) => j,
+                    Err(_) => return FFI_ERR_UNKNOWN,
+                };
+                let mut guard = match ENGINE.lock() {
+                    Ok(g) => g,
+                    Err(_) => return FFI_ERR_UNKNOWN,
+                };
+                let engine = match guard.as_mut() {
+                    Some(e) => e,
+                    None => return FFI_ERR_NOT_INIT,
+                };
+                let (ptr, len) = set_return_buffer(engine, json);
+                unsafe {
+                    *out_ptr = ptr;
+                    *out_len = len;
+                }
+                FFI_OK
+            }
+            Err(e) => auth_error_to_ffi(&e),
+        }
+    })
+    .unwrap_or(FFI_ERR_PANIC)
+}
+
+/// Remove a device from the current user's device list.
+///
+/// # Safety
+/// `device_id_ptr` must be valid UTF-8.
+#[no_mangle]
+pub unsafe extern "C" fn reader_auth_remove_device(
+    device_id_ptr: *const u8,
+    device_id_len: u32,
+) -> i32 {
+    catch_unwind(|| {
+        let device_id = match unsafe { ptr_to_str(device_id_ptr, device_id_len) } {
+            Ok(s) => s,
+            Err(code) => return code,
+        };
+
+        let rt = match get_runtime() {
+            Ok(rt) => rt,
+            Err(code) => return code,
+        };
+
+        let mgr = match get_auth_manager() {
+            Ok(m) => m,
+            Err(code) => return code,
+        };
+
+        let access_token = match rt.block_on(mgr.get_valid_token()) {
+            Ok(t) => t,
+            Err(e) => {
+                let state = rt.block_on(mgr.state());
+                fire_auth_callback(&state);
+                return auth_error_to_ffi(&e);
+            }
+        };
+
+        match rt.block_on(mgr.remove_device(&access_token, device_id)) {
+            Ok(()) => FFI_OK,
+            Err(e) => auth_error_to_ffi(&e),
         }
     })
     .unwrap_or(FFI_ERR_PANIC)
@@ -1216,6 +1656,348 @@ pub unsafe extern "C" fn reader_set_sync_callback(callback: SyncCallbackFn) -> i
         };
         *guard = callback;
         FFI_OK
+    })
+    .unwrap_or(FFI_ERR_PANIC)
+}
+
+// ─── Sync Infrastructure ─────────────────────────────────────────────────────
+
+use core_sync::engine::{SyncEngine, SyncStorage};
+use core_sync::scheduler::{SyncScheduler, SyncState, TokenProvider};
+use core_network::http_transport::HttpTransport;
+use core_network::NetworkSyncAdapter;
+
+/// Adapter that bridges `core_storage::Database` (via `EngineState`) to the
+/// `SyncStorage` trait required by `SyncEngine`.
+///
+/// Because `Database` uses `rusqlite::Connection` (which contains `RefCell`
+/// and is not `Sync`), we cannot hold a direct `&Database` across threads.
+/// Instead, each method acquires the global `ENGINE` mutex, which is the
+/// same pattern used by all other FFI functions.
+struct StorageAdapter;
+
+impl SyncStorage for StorageAdapter {
+    fn get_unsynced_ops(
+        &self,
+    ) -> Result<Vec<core_sync::engine::UnsyncedOp>, core_sync::SyncError> {
+        let mut guard = ENGINE
+            .lock()
+            .map_err(|_| core_sync::SyncError::Storage("Engine lock poisoned".into()))?;
+        let engine = guard
+            .as_mut()
+            .ok_or_else(|| core_sync::SyncError::Storage("Engine not initialized".into()))?;
+
+        engine
+            .state_manager
+            .database()
+            .get_unsynced_ops()
+            .map(|ops| {
+                ops.into_iter()
+                    .map(|(id, op_type, op_data, hlc_ts, device_id)| {
+                        core_sync::engine::UnsyncedOp {
+                            local_id: id,
+                            op_id: uuid::Uuid::new_v4().to_string(),
+                            op_type,
+                            op_data,
+                            hlc_ts,
+                            device_id,
+                        }
+                    })
+                    .collect()
+            })
+            .map_err(|e| core_sync::SyncError::Storage(e.to_string()))
+    }
+
+    fn mark_ops_synced(&self, local_ids: &[i64]) -> Result<(), core_sync::SyncError> {
+        let mut guard = ENGINE
+            .lock()
+            .map_err(|_| core_sync::SyncError::Storage("Engine lock poisoned".into()))?;
+        let engine = guard
+            .as_mut()
+            .ok_or_else(|| core_sync::SyncError::Storage("Engine not initialized".into()))?;
+
+        engine
+            .state_manager
+            .database()
+            .mark_ops_synced(local_ids)
+            .map_err(|e| core_sync::SyncError::Storage(e.to_string()))
+    }
+
+    fn get_sync_meta(&self, key: &str) -> Result<Option<String>, core_sync::SyncError> {
+        let mut guard = ENGINE
+            .lock()
+            .map_err(|_| core_sync::SyncError::Storage("Engine lock poisoned".into()))?;
+        let engine = guard
+            .as_mut()
+            .ok_or_else(|| core_sync::SyncError::Storage("Engine not initialized".into()))?;
+
+        engine
+            .state_manager
+            .database()
+            .get_sync_meta(key)
+            .map_err(|e| core_sync::SyncError::Storage(e.to_string()))
+    }
+
+    fn set_sync_meta(&self, key: &str, value: &str) -> Result<(), core_sync::SyncError> {
+        let mut guard = ENGINE
+            .lock()
+            .map_err(|_| core_sync::SyncError::Storage("Engine lock poisoned".into()))?;
+        let engine = guard
+            .as_mut()
+            .ok_or_else(|| core_sync::SyncError::Storage("Engine not initialized".into()))?;
+
+        engine
+            .state_manager
+            .database()
+            .set_sync_meta(key, value)
+            .map_err(|e| core_sync::SyncError::Storage(e.to_string()))
+    }
+
+    fn apply_remote_op(
+        &self,
+        op: &core_sync::engine::RemoteOp,
+    ) -> Result<bool, core_sync::SyncError> {
+        let mut guard = ENGINE
+            .lock()
+            .map_err(|_| core_sync::SyncError::Storage("Engine lock poisoned".into()))?;
+        let engine = guard
+            .as_mut()
+            .ok_or_else(|| core_sync::SyncError::Storage("Engine not initialized".into()))?;
+
+        engine
+            .state_manager
+            .database()
+            .apply_remote_op(&op.op_type, &op.op_data, op.hlc_ts, &op.device_id)
+            .map_err(|e| core_sync::SyncError::Storage(e.to_string()))
+    }
+}
+
+/// Token provider that delegates to the global AuthManager.
+struct AuthManagerTokenProvider;
+
+impl TokenProvider for AuthManagerTokenProvider {
+    fn get_token(&self) -> Option<String> {
+        let mgr = get_auth_manager().ok()?;
+        let rt = get_runtime().ok()?;
+        rt.block_on(mgr.get_valid_token()).ok()
+    }
+}
+
+/// Type alias for the concrete SyncScheduler used in FFI.
+type FfiSyncScheduler = SyncScheduler<StorageAdapter, NetworkSyncAdapter<HttpTransport>>;
+
+/// Global SyncScheduler instance.
+static SYNC_SCHEDULER: Mutex<Option<FfiSyncScheduler>> = Mutex::new(None);
+
+/// Convert a SyncState to its FFI i32 representation.
+fn sync_state_to_i32(state: &SyncState) -> i32 {
+    match state {
+        SyncState::Idle => 0,
+        SyncState::Syncing => 1,
+        SyncState::Error => 2,
+        SyncState::Offline => 3,
+        SyncState::Dormant => 4,
+    }
+}
+
+/// Fire the sync callback with the given state.
+fn fire_sync_callback(state: &SyncState) {
+    let code = sync_state_to_i32(state);
+    if let Ok(guard) = SYNC_CALLBACK.lock() {
+        if let Some(cb) = *guard {
+            cb(code);
+        }
+    }
+}
+
+/// Map a SyncError to an FFI error code.
+fn sync_error_to_ffi(err: &core_sync::SyncError) -> i32 {
+    match err {
+        core_sync::SyncError::NotAuthenticated => FFI_ERR_AUTH,
+        core_sync::SyncError::Transport(_) => FFI_ERR_NETWORK,
+        _ => FFI_ERR_SYNC,
+    }
+}
+
+/// Helper: ensure the SyncScheduler is created (but not necessarily started).
+/// Requires that AUTH_MANAGER is already initialized (i.e., base_url was provided).
+fn ensure_sync_scheduler() -> Result<(), i32> {
+    let mut guard = SYNC_SCHEDULER.lock().map_err(|_| FFI_ERR_UNKNOWN)?;
+    if guard.is_some() {
+        return Ok(());
+    }
+
+    let engine = build_sync_engine()?;
+    let scheduler = SyncScheduler::new(engine);
+    *guard = Some(scheduler);
+    Ok(())
+}
+
+fn with_valid_sync_token(
+    rt: &'static tokio::runtime::Runtime,
+) -> Result<(Arc<AuthManager<HttpAuthProvider, FileTokenStore>>, String), i32> {
+    let mgr = get_auth_manager().map_err(|_| FFI_ERR_AUTH)?;
+    match rt.block_on(mgr.get_valid_token()) {
+        Ok(token) => Ok((mgr, token)),
+        Err(_) => Err(FFI_ERR_AUTH),
+    }
+}
+
+fn run_manual_sync<F>(operation: F) -> i32
+where
+    F: FnOnce(&'static tokio::runtime::Runtime, &FfiSyncEngine, &str) -> Result<(), core_sync::SyncError>,
+{
+    let rt = match get_runtime() {
+        Ok(rt) => rt,
+        Err(code) => return code,
+    };
+
+    let (mgr, token) = match with_valid_sync_token(rt) {
+        Ok(value) => value,
+        Err(code) => return code,
+    };
+
+    let engine = match build_sync_engine() {
+        Ok(engine) => engine,
+        Err(code) => return code,
+    };
+
+    fire_sync_callback(&SyncState::Syncing);
+
+    let result = operation(rt, &engine, &token);
+
+    let auth_state = rt.block_on(mgr.state());
+    fire_auth_callback(&auth_state);
+
+    match result {
+        Ok(()) => {
+            fire_sync_callback(&SyncState::Idle);
+            FFI_OK
+        }
+        Err(e) => {
+            let sync_state = match &e {
+                core_sync::SyncError::NotAuthenticated => SyncState::Dormant,
+                core_sync::SyncError::Transport(_) => SyncState::Offline,
+                _ => SyncState::Error,
+            };
+            fire_sync_callback(&sync_state);
+            sync_error_to_ffi(&e)
+        }
+    }
+}
+
+// ─── Sync FFI Functions ──────────────────────────────────────────────────────
+
+/// Push local pending operations to the server.
+///
+/// # Safety
+/// No pointer parameters required.
+#[no_mangle]
+pub unsafe extern "C" fn reader_sync_push() -> i32 {
+    catch_unwind(|| {
+        run_manual_sync(|rt, engine, token| {
+            rt.block_on(engine.push_pending(token))?;
+            Ok(())
+        })
+    })
+    .unwrap_or(FFI_ERR_PANIC)
+}
+
+/// Pull remote operations from the server.
+///
+/// # Safety
+/// No pointer parameters required.
+#[no_mangle]
+pub unsafe extern "C" fn reader_sync_pull() -> i32 {
+    catch_unwind(|| {
+        run_manual_sync(|rt, engine, token| {
+            rt.block_on(engine.pull_remote(token))?;
+            Ok(())
+        })
+    })
+    .unwrap_or(FFI_ERR_PANIC)
+}
+
+/// Perform a full sync (push + pull).
+///
+/// # Safety
+/// No pointer parameters required.
+#[no_mangle]
+pub unsafe extern "C" fn reader_sync_full() -> i32 {
+    catch_unwind(|| {
+        run_manual_sync(|rt, engine, token| {
+            rt.block_on(engine.sync(token))?;
+            Ok(())
+        })
+    })
+    .unwrap_or(FFI_ERR_PANIC)
+}
+
+/// Start the background sync scheduler.
+///
+/// # Safety
+/// No pointer parameters required.
+#[no_mangle]
+pub unsafe extern "C" fn reader_sync_start_scheduler() -> i32 {
+    catch_unwind(|| {
+        let rt = match get_runtime() {
+            Ok(rt) => rt,
+            Err(code) => return code,
+        };
+
+        if get_auth_manager().is_err() {
+            return FFI_ERR_AUTH;
+        }
+
+        if let Err(code) = ensure_sync_scheduler() {
+            return code;
+        }
+
+        let mut guard = match SYNC_SCHEDULER.lock() {
+            Ok(g) => g,
+            Err(_) => return FFI_ERR_UNKNOWN,
+        };
+
+        if let Some(scheduler) = guard.as_mut() {
+            rt.block_on(scheduler.set_state_callback(Box::new(|state| {
+                fire_sync_callback(&state);
+            })));
+
+            let token_provider = Arc::new(AuthManagerTokenProvider);
+            scheduler.start(token_provider);
+            FFI_OK
+        } else {
+            FFI_ERR_NOT_INIT
+        }
+    })
+    .unwrap_or(FFI_ERR_PANIC)
+}
+
+/// Stop the background sync scheduler.
+///
+/// # Safety
+/// No pointer parameters required.
+#[no_mangle]
+pub unsafe extern "C" fn reader_sync_stop_scheduler() -> i32 {
+    catch_unwind(|| {
+        let rt = match get_runtime() {
+            Ok(rt) => rt,
+            Err(code) => return code,
+        };
+
+        let mut guard = match SYNC_SCHEDULER.lock() {
+            Ok(g) => g,
+            Err(_) => return FFI_ERR_UNKNOWN,
+        };
+
+        if let Some(scheduler) = guard.as_mut() {
+            rt.block_on(scheduler.stop());
+            fire_sync_callback(&SyncState::Dormant);
+            FFI_OK
+        } else {
+            // Not initialized is not an error for stop
+            FFI_OK
+        }
     })
     .unwrap_or(FFI_ERR_PANIC)
 }
@@ -1256,6 +2038,8 @@ mod tests {
                 db_path.len() as u32,
                 device_id.as_ptr(),
                 device_id.len() as u32,
+                std::ptr::null(),
+                0,
             )
         };
         assert_eq!(result, FFI_OK);
@@ -1292,7 +2076,7 @@ mod tests {
     fn test_null_pointer_handling() {
         let _lock = acquire_lock();
         reset_engine();
-        let result = unsafe { reader_engine_init(std::ptr::null(), 0, std::ptr::null(), 0) };
+        let result = unsafe { reader_engine_init(std::ptr::null(), 0, std::ptr::null(), 0, std::ptr::null(), 0) };
         assert_eq!(result, FFI_ERR_NULL_PTR);
     }
 
@@ -1346,6 +2130,8 @@ let (_dir, db_path) = temp_db_path();
                 db_path.len() as u32,
                 device_id.as_ptr(),
                 device_id.len() as u32,
+                std::ptr::null(),
+                0,
             )
         };
         assert_eq!(result, FFI_ERR_ALREADY_INIT);
@@ -1380,6 +2166,8 @@ let (_dir, db_path) = temp_db_path();
                 invalid_bytes.len() as u32,
                 device_id.as_ptr(),
                 device_id.len() as u32,
+                std::ptr::null(),
+                0,
             )
         };
         assert_eq!(result, FFI_ERR_INVALID_UTF8);
@@ -1397,6 +2185,8 @@ let (_dir, db_path) = temp_db_path();
                 db_path.len() as u32,
                 invalid_bytes.as_ptr(),
                 invalid_bytes.len() as u32,
+                std::ptr::null(),
+                0,
             )
         };
         assert_eq!(result, FFI_ERR_INVALID_UTF8);
