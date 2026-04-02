@@ -8,6 +8,8 @@
 "sidebar.bookmarks" = "书签";
 "sidebar.annotations" = "批注";
 "sidebar.search" = "搜索";
+"sidebar.signIn" = "登录";
+"sidebar.signedIn" = "已登录";
 
 // MARK: - Library
 "library.title" = "书库";
@@ -64,6 +66,7 @@
 "annotations.delete" = "删除";
 
 // MARK: - Settings
+"settings.account" = "账户";
 "settings.reading" = "阅读";
 "settings.appearance" = "外观";
 "settings.font" = "字体";
@@ -101,3 +104,53 @@
 // MARK: - Errors
 "error.title" = "错误";
 "error.ok" = "好";
+
+// MARK: - Account
+"account.registrationSuccess" = "注册成功，请登录。";
+"account.signIn" = "登录";
+"account.usernameOrEmail" = "用户名或邮箱";
+"account.password" = "密码";
+"account.signingIn" = "正在登录...";
+"account.noAccount" = "还没有账户？";
+"account.register" = "注册";
+"account.loginFailed" = "登录失败";
+"account.unknownError" = "发生未知错误。";
+"account.createAccount" = "创建账户";
+"account.username" = "用户名";
+"account.email" = "邮箱";
+"account.passwordMin8" = "密码（至少 8 个字符）";
+"account.confirmPassword" = "确认密码";
+"account.passwordsMismatch" = "两次输入的密码不一致";
+"account.creatingAccount" = "正在创建账户...";
+"account.haveAccount" = "已有账户？";
+"account.registrationFailed" = "注册失败";
+"account.signedIn" = "已登录";
+"account.status.active" = "状态：正常";
+"account.status.needsAttention" = "状态：需要处理";
+"account.accountSection" = "账户";
+"account.syncSection" = "同步";
+"account.syncNow" = "立即同步";
+"account.autoSync" = "自动同步";
+"account.manageSection" = "管理";
+"account.devices" = "设备列表";
+"account.changePassword" = "修改密码";
+"account.signOut" = "退出登录";
+"account.cancel" = "取消";
+"account.signOutConfirmMessage" = "确定要退出登录吗？本地数据会被保留。";
+"account.syncing" = "正在同步...";
+"account.upToDate" = "已是最新";
+"account.syncFailed" = "同步失败";
+"account.offline" = "离线";
+"account.syncPaused" = "同步已暂停";
+"account.syncWaiting" = "等待同步";
+"account.currentPassword" = "当前密码";
+"account.newPasswordMin8" = "新密码（至少 8 个字符）";
+"account.confirmNewPassword" = "确认新密码";
+"account.changePasswordFailed" = "修改密码失败";
+"account.done" = "完成";
+"account.loadingDevices" = "正在加载设备...";
+
+"account.add" = "添加";
+"account.settings" = "设置";
+
+// MARK: - Error Messages

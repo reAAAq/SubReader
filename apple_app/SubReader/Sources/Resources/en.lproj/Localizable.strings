@@ -8,6 +8,8 @@
 "sidebar.bookmarks" = "Bookmarks";
 "sidebar.annotations" = "Annotations";
 "sidebar.search" = "Search";
+"sidebar.signIn" = "Sign In";
+"sidebar.signedIn" = "Signed In";
 
 // MARK: - Library
 "library.title" = "Library";
@@ -64,6 +66,7 @@
 "annotations.delete" = "Delete";
 
 // MARK: - Settings
+"settings.account" = "Account";
 "settings.reading" = "Reading";
 "settings.appearance" = "Appearance";
 "settings.font" = "Font";
@@ -99,5 +102,57 @@
 "commands.bookmarkCurrentPage" = "Bookmark Current Page";
 
 // MARK: - Errors
+"error.title" = "Error";
+"error.ok" = "OK";
+
+// MARK: - Account
+"account.registrationSuccess" = "Registration successful! Please sign in.";
+"account.signIn" = "Sign In";
+"account.usernameOrEmail" = "Username or Email";
+"account.password" = "Password";
+"account.signingIn" = "Signing in...";
+"account.noAccount" = "Don't have an account?";
+"account.register" = "Register";
+"account.loginFailed" = "Login Failed";
+"account.unknownError" = "An unknown error occurred.";
+"account.createAccount" = "Create Account";
+"account.username" = "Username";
+"account.email" = "Email";
+"account.passwordMin8" = "Password (min 8 characters)";
+"account.confirmPassword" = "Confirm Password";
+"account.passwordsMismatch" = "Passwords do not match";
+"account.creatingAccount" = "Creating account...";
+"account.haveAccount" = "Already have an account?";
+"account.registrationFailed" = "Registration Failed";
+"account.signedIn" = "Signed In";
+"account.status.active" = "Status: Active";
+"account.status.needsAttention" = "Status: Needs Attention";
+"account.accountSection" = "Account";
+"account.syncSection" = "Sync";
+"account.syncNow" = "Sync Now";
+"account.autoSync" = "Auto Sync";
+"account.manageSection" = "Manage";
+"account.devices" = "Devices";
+"account.changePassword" = "Change Password";
+"account.signOut" = "Sign Out";
+"account.cancel" = "Cancel";
+"account.signOutConfirmMessage" = "Are you sure you want to sign out? Local data will be preserved.";
+"account.syncing" = "Syncing...";
+"account.upToDate" = "Up to date";
+"account.syncFailed" = "Sync failed";
+"account.offline" = "Offline";
+"account.syncPaused" = "Sync paused";
+"account.syncWaiting" = "Waiting to sync";
+"account.currentPassword" = "Current Password";
+"account.newPasswordMin8" = "New Password (min 8 characters)";
+"account.confirmNewPassword" = "Confirm New Password";
+"account.changePasswordFailed" = "Change Password Failed";
+"account.done" = "Done";
+"account.loadingDevices" = "Loading devices...";
+
+"account.add" = "Add";
+"account.settings" = "Settings";
+
+// MARK: - Error Messages
 "error.title" = "Error";
 "error.ok" = "OK";
