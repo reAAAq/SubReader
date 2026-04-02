@@ -14,32 +14,67 @@ enum SidebarItem: Hashable {
 
 struct SidebarView: View {
     @EnvironmentObject var appState: AppState
+    @EnvironmentObject var authService: AuthService
     @ObservedObject private var languageManager = LanguageManager.shared
+    @Environment(\.openWindow) private var openWindow
 
     @State private var selection: SidebarItem? = .allBooks
 
     var body: some View {
-        List(selection: $selection) {
-            Section(L("sidebar.library")) {
-                Label(L("sidebar.allBooks"), systemImage: "books.vertical")
-                    .tag(SidebarItem.allBooks)
-            }
+        VStack(spacing: 0) {
+            List(selection: $selection) {
+                Section(L("sidebar.library")) {
+                    Label(L("sidebar.allBooks"), systemImage: "books.vertical")
+                        .tag(SidebarItem.allBooks)
+                }
 
-            if appState.isReaderActive {
-                Section(L("sidebar.reading")) {
-                    Label(L("sidebar.toc"), systemImage: "list.bullet")
-                        .tag(SidebarItem.toc)
+                if appState.isReaderActive {
+                    Section(L("sidebar.reading")) {
+                        Label(L("sidebar.toc"), systemImage: "list.bullet")
+                            .tag(SidebarItem.toc)
 
-                    Label(L("sidebar.bookmarks"), systemImage: "bookmark")
-                        .tag(SidebarItem.bookmarks)
+                        Label(L("sidebar.bookmarks"), systemImage: "bookmark")
+                            .tag(SidebarItem.bookmarks)
 
-                    Label(L("sidebar.annotations"), systemImage: "highlighter")
-                        .tag(SidebarItem.annotations)
+                        Label(L("sidebar.annotations"), systemImage: "highlighter")
+                            .tag(SidebarItem.annotations)
+                    }
                 }
             }
+            .listStyle(.sidebar)
+            .searchable(text: $appState.searchText, placement: .sidebar, prompt: L("sidebar.search"))
+
+            Divider()
+
+            // MARK: - User Profile Button (Apple Books style)
+            Button {
+                openAccountWindow()
+            } label: {
+                HStack(spacing: 8) {
+                    Image(systemName: authService.isLoggedIn ? "person.crop.circle.fill" : "person.crop.circle")
+                        .font(.system(size: 24))
+                        .foregroundStyle(authService.isLoggedIn ? .primary : .secondary)
+
+                    VStack(alignment: .leading, spacing: 1) {
+                        if authService.isLoggedIn {
+                            Text(L("sidebar.signedIn"))
+                                .font(.callout)
+                                .foregroundStyle(.primary)
+                        } else {
+                            Text(L("sidebar.signIn"))
+                                .font(.callout)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+
+                    Spacer()
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
         }
-        .listStyle(.sidebar)
-        .searchable(text: $appState.searchText, placement: .sidebar, prompt: L("sidebar.search"))
         .onChange(of: selection) { _, newValue in
             handleSelection(newValue)
         }
@@ -52,6 +87,8 @@ struct SidebarView: View {
             }
         }
     }
+
+    // MARK: - Private Methods
 
     private func handleSelection(_ item: SidebarItem?) {
         guard let item else { return }
@@ -67,5 +104,10 @@ struct SidebarView: View {
             // Show annotations panel
             break
         }
+    }
+
+    /// Open the account window.
+    private func openAccountWindow() {
+        openWindow(id: "account")
     }
 }

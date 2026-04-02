@@ -134,6 +134,13 @@ struct ReaderToolbarModifier: ViewModifier {
             .toolbar {
                 ToolbarItemGroup(placement: .navigation) {
                     Button {
+                        config.onBack?()
+                    } label: {
+                        Image(systemName: "chevron.left")
+                    }
+                    .help(L("reader.backToLibrary"))
+
+                    Button {
                         withAnimation(.easeInOut(duration: 0.2)) {
                             config.showTOC.wrappedValue.toggle()
                         }

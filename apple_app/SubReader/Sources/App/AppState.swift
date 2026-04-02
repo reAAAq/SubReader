@@ -119,11 +119,19 @@ final class AppState: ObservableObject {
 
     let engine: any ReaderEngineProtocol
     private var activeImportOperations = 0
+    private let chapterCache: ChapterCache
+    private let coverCache: CoverImageCache
 
     // MARK: - Init
 
-    init(engine: any ReaderEngineProtocol) {
+    init(
+        engine: any ReaderEngineProtocol,
+        chapterCache: ChapterCache,
+        coverCache: CoverImageCache
+    ) {
         self.engine = engine
+        self.chapterCache = chapterCache
+        self.coverCache = coverCache
     }
 
     // MARK: - Book Operations
@@ -359,8 +367,8 @@ final class AppState: ObservableObject {
         let fileURL = libraryBooks.first(where: { $0.id == id })?.fileURL
         libraryBooks.removeAll { $0.id == id }
         TxtContentStore.shared.remove(bookId: id)
-        DIContainer.shared.chapterCache.invalidate(bookId: id)
-        DIContainer.shared.coverCache.remove(bookId: id)
+        chapterCache.invalidate(bookId: id)
+        coverCache.remove(bookId: id)
         Self.removeManagedBookCopy(at: fileURL)
         if currentBookId == id {
             currentDestination = .library
@@ -369,7 +377,7 @@ final class AppState: ObservableObject {
     }
 
     func releaseReaderResources(for bookId: String) {
-        DIContainer.shared.chapterCache.invalidate(bookId: bookId)
+        chapterCache.invalidate(bookId: bookId)
         guard let index = libraryBooks.firstIndex(where: { $0.id == bookId }),
               libraryBooks[index].fileURL != nil else { return }
         libraryBooks[index].bookData = nil
