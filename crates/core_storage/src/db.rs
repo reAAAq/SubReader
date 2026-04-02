@@ -442,6 +442,159 @@ impl Database {
             .map_err(|e| StorageError::QueryFailed(e.to_string()))?;
         Ok(())
     }
+
+    // ─── Sync Metadata ───────────────────────────────────────────────────────
+
+    /// Get a sync metadata value by key.
+    pub fn get_sync_meta(&self, key: &str) -> Result<Option<String>, StorageError> {
+        let result = self
+            .conn
+            .query_row(
+                "SELECT value FROM sync_metadata WHERE key = ?1",
+                params![key],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()
+            .map_err(|e| StorageError::QueryFailed(e.to_string()))?;
+        Ok(result)
+    }
+
+    /// Set a sync metadata value (upsert).
+    pub fn set_sync_meta(&self, key: &str, value: &str) -> Result<(), StorageError> {
+        self.conn
+            .execute(
+                "INSERT INTO sync_metadata (key, value, updated_at)
+                 VALUES (?1, ?2, datetime('now'))
+                 ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
+                params![key, value],
+            )
+            .map_err(|e| StorageError::QueryFailed(e.to_string()))?;
+        Ok(())
+    }
+
+    /// Apply a remote operation to local storage using LWW (Last-Writer-Wins) conflict resolution.
+    ///
+    /// Returns `true` if the operation was applied, `false` if it was a duplicate or conflict loser.
+    pub fn apply_remote_op(
+        &self,
+        _op_type: &str,
+        op_data: &str,
+        hlc_ts: i64,
+        _device_id: &str,
+    ) -> Result<bool, StorageError> {
+        // Parse the operation
+        let operation: core_sync::Operation = serde_json::from_str(op_data)
+            .map_err(|e| StorageError::QueryFailed(format!("Failed to parse op_data: {}", e)))?;
+
+        match operation {
+            core_sync::Operation::UpdateProgress {
+                book_id,
+                cfi_position,
+                percentage,
+            } => {
+                // LWW: only apply if remote hlc_ts > local hlc_ts
+                let local_ts: i64 = self
+                    .conn
+                    .query_row(
+                        "SELECT hlc_ts FROM reading_progress WHERE book_id = ?1",
+                        params![book_id],
+                        |row| row.get(0),
+                    )
+                    .optional()
+                    .map_err(|e| StorageError::QueryFailed(e.to_string()))?
+                    .unwrap_or(0);
+
+                if hlc_ts > local_ts {
+                    let progress = shared_types::ReadingProgress {
+                        book_id,
+                        cfi_position,
+                        percentage,
+                        hlc_timestamp: hlc_ts as u64,
+                    };
+                    self.upsert_progress(&progress)?;
+                    Ok(true)
+                } else {
+                    Ok(false)
+                }
+            }
+            core_sync::Operation::AddBookmark {
+                bookmark_id,
+                book_id,
+                cfi_position,
+                title,
+            } => {
+                let bookmark = shared_types::Bookmark {
+                    id: bookmark_id,
+                    book_id,
+                    cfi_position,
+                    title,
+                    created_at: hlc_ts as u64,
+                };
+                // Ignore duplicate errors
+                match self.add_bookmark(&bookmark) {
+                    Ok(()) => Ok(true),
+                    Err(StorageError::QueryFailed(_)) => Ok(false), // likely duplicate
+                    Err(e) => Err(e),
+                }
+            }
+            core_sync::Operation::DeleteBookmark { bookmark_id } => {
+                self.delete_bookmark(&bookmark_id)?;
+                Ok(true)
+            }
+            core_sync::Operation::AddAnnotation {
+                annotation_id,
+                book_id,
+                cfi_start,
+                cfi_end,
+                color_rgba,
+                note,
+            } => {
+                let annotation = shared_types::Annotation {
+                    id: annotation_id,
+                    book_id,
+                    cfi_start,
+                    cfi_end,
+                    color_rgba,
+                    note,
+                    created_at: hlc_ts as u64,
+                };
+                match self.add_annotation(&annotation) {
+                    Ok(()) => Ok(true),
+                    Err(StorageError::QueryFailed(_)) => Ok(false),
+                    Err(e) => Err(e),
+                }
+            }
+            core_sync::Operation::DeleteAnnotation { annotation_id } => {
+                self.delete_annotation(&annotation_id)?;
+                Ok(true)
+            }
+            core_sync::Operation::UpdatePreference { key, value } => {
+                // LWW for preferences
+                let local_ts: i64 = self
+                    .conn
+                    .query_row(
+                        "SELECT hlc_ts FROM preferences WHERE key = ?1",
+                        params![key],
+                        |row| row.get(0),
+                    )
+                    .optional()
+                    .map_err(|e| StorageError::QueryFailed(e.to_string()))?
+                    .unwrap_or(0);
+
+                if hlc_ts > local_ts {
+                    let pref = shared_types::UserPreference {
+                        key,
+                        value,
+                        hlc_timestamp: hlc_ts as u64,
+                    };
+                    self.set_preference(&pref)?;
+                    Ok(true)
+                } else {
+                    Ok(false)
+                }
+            }
+        }
+    }
 }
 
 #[cfg(test)]
