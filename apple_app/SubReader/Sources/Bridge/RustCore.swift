@@ -225,6 +225,36 @@ public final class RustCore: ReaderEngineProtocol, @unchecked Sendable {
         }
     }
 
+    public func getResource(href: String) -> Result<Data, ReaderError> {
+        ffiQueue.sync {
+            let start = CFAbsoluteTimeGetCurrent()
+            var outPtr: UnsafePointer<UInt8>?
+            var outLen: UInt32 = 0
+
+            let code = href.withCString { hrefCStr in
+                reader_get_resource(
+                    UnsafeRawPointer(hrefCStr).assumingMemoryBound(to: UInt8.self),
+                    UInt32(href.utf8.count),
+                    &outPtr,
+                    &outLen
+                )
+            }
+
+            if let error = ReaderError.from(code: code) {
+                return .failure(error)
+            }
+
+            guard let ptr = outPtr, outLen > 0 else {
+                return .failure(.notFound)
+            }
+
+            let data = Data(bytes: ptr, count: Int(outLen))
+            let elapsed = (CFAbsoluteTimeGetCurrent() - start) * 1000
+            Self.logger.debug("reader_get_resource(\(href)): \(elapsed, format: .fixed(precision: 2))ms, \(outLen) bytes")
+            return .success(data)
+        }
+    }
+
     public func resolveTocHref(href: String) -> Result<Int, ReaderError> {
         ffiQueue.sync {
             let code = href.withCString { hrefCStr in

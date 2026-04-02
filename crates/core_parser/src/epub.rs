@@ -544,6 +544,63 @@ impl EpubParser {
         parse_xhtml_to_dom(&content)
     }
 
+    /// Read a resource file (image, CSS, font, etc.) from the EPUB archive.
+    ///
+    /// The `href` is typically the `src` attribute from an `<img>` tag in the
+    /// chapter XHTML. It may be relative to the chapter file or to the OPF base.
+    /// This method tries multiple resolution strategies:
+    /// 1. Direct path lookup
+    /// 2. Prepend OPF base directory
+    /// 3. Search manifest by filename
+    pub fn get_resource(&mut self, href: &str) -> Result<Vec<u8>, ParseError> {
+        if href.is_empty() {
+            return Err(ParseError::InvalidEpub("Empty resource href".to_string()));
+        }
+
+        // Strategy 1: Try the href as-is (absolute path within the archive)
+        if let Ok(data) = self.read_file_from_archive(href) {
+            return Ok(data);
+        }
+
+        // Strategy 2: Prepend OPF base directory
+        let with_base = format!("{}{}", self.opf_base, href);
+        if let Ok(data) = self.read_file_from_archive(&with_base) {
+            return Ok(data);
+        }
+
+        // Strategy 3: Try resolving relative paths (e.g., "../images/foo.png")
+        // by normalizing against the OPF base
+        let normalized = normalize_path(&format!("{}{}", self.opf_base, href));
+        if normalized != with_base {
+            if let Ok(data) = self.read_file_from_archive(&normalized) {
+                return Ok(data);
+            }
+        }
+
+        // Strategy 4: Search manifest for matching filename
+        self.ensure_opf_cache()?;
+        let mut candidate_paths = Vec::new();
+        if let Some(cache) = &self.opf_cache {
+            let filename = href.rsplit('/').next().unwrap_or(href);
+            for (_id, (manifest_href, _media, _props)) in &cache.manifest {
+                let manifest_filename = manifest_href.rsplit('/').next().unwrap_or(manifest_href);
+                if manifest_filename == filename {
+                    candidate_paths.push(format!("{}{}", self.opf_base, manifest_href));
+                }
+            }
+        }
+        for path in &candidate_paths {
+            if let Ok(data) = self.read_file_from_archive(path) {
+                return Ok(data);
+            }
+        }
+
+        Err(ParseError::InvalidEpub(format!(
+            "Resource not found in archive: {}",
+            href
+        )))
+    }
+
     /// Read a file from the ZIP archive.
     fn read_file_from_archive(&mut self, path: &str) -> Result<Vec<u8>, ParseError> {
         let mut file = self.archive.by_name(path).map_err(|e| {
@@ -774,6 +831,21 @@ fn tag_to_node_type(tag: &str) -> NodeType {
         | "figure" | "figcaption" | "nav" | "details" | "summary" => NodeType::Span,
         _ => NodeType::Span,
     }
+}
+
+/// Normalize a path by resolving `.` and `..` segments.
+fn normalize_path(path: &str) -> String {
+    let mut parts: Vec<&str> = Vec::new();
+    for segment in path.split('/') {
+        match segment {
+            "." | "" => {}
+            ".." => {
+                parts.pop();
+            }
+            s => parts.push(s),
+        }
+    }
+    parts.join("/")
 }
 
 /// Build a CFI string from the counter stack.
@@ -1066,5 +1138,251 @@ mod tests {
         // "#section1" has empty base_href, should return -1
         let idx = parser.resolve_toc_href("#section1").unwrap();
         assert_eq!(idx, -1);
+    }
+
+    // ─── normalize_path Tests ────────────────────────────────────────────
+
+    #[test]
+    fn test_normalize_path_simple() {
+        assert_eq!(normalize_path("OEBPS/images/photo.png"), "OEBPS/images/photo.png");
+    }
+
+    #[test]
+    fn test_normalize_path_with_dot() {
+        assert_eq!(normalize_path("OEBPS/./images/photo.png"), "OEBPS/images/photo.png");
+    }
+
+    #[test]
+    fn test_normalize_path_with_dotdot() {
+        assert_eq!(normalize_path("OEBPS/text/../images/photo.png"), "OEBPS/images/photo.png");
+    }
+
+    #[test]
+    fn test_normalize_path_multiple_dotdot() {
+        assert_eq!(
+            normalize_path("OEBPS/text/sub/../../images/photo.png"),
+            "OEBPS/images/photo.png"
+        );
+    }
+
+    #[test]
+    fn test_normalize_path_consecutive_slashes() {
+        assert_eq!(normalize_path("OEBPS//images///photo.png"), "OEBPS/images/photo.png");
+    }
+
+    #[test]
+    fn test_normalize_path_dotdot_at_root() {
+        // ".." beyond root should be silently ignored (no panic)
+        assert_eq!(normalize_path("../images/photo.png"), "images/photo.png");
+    }
+
+    #[test]
+    fn test_normalize_path_only_dotdot() {
+        assert_eq!(normalize_path(".."), "");
+    }
+
+    #[test]
+    fn test_normalize_path_empty() {
+        assert_eq!(normalize_path(""), "");
+    }
+
+    #[test]
+    fn test_normalize_path_only_dots() {
+        assert_eq!(normalize_path("./././."), "");
+    }
+
+    #[test]
+    fn test_normalize_path_trailing_slash() {
+        assert_eq!(normalize_path("OEBPS/images/"), "OEBPS/images");
+    }
+
+    #[test]
+    fn test_normalize_path_complex() {
+        assert_eq!(
+            normalize_path("OEBPS/text/chapter/../sub/./../../images/cover.jpg"),
+            "OEBPS/images/cover.jpg"
+        );
+    }
+
+    // ─── get_resource Tests ──────────────────────────────────────────────
+
+    /// Helper to create a test EPUB with image resources at various paths
+    /// for testing all 4 resource resolution strategies.
+    fn create_test_epub_with_images() -> Vec<u8> {
+        use std::io::Write;
+        use zip::write::SimpleFileOptions;
+        use zip::ZipWriter;
+
+        let buf = Vec::new();
+        let cursor = Cursor::new(buf);
+        let mut zip = ZipWriter::new(cursor);
+        let options = SimpleFileOptions::default();
+
+        // Fake 1x1 PNG data (minimal valid PNG)
+        let fake_png: &[u8] = b"FAKE_PNG_DATA_FOR_TESTING";
+        let fake_jpg: &[u8] = b"FAKE_JPG_DATA_FOR_TESTING";
+
+        // mimetype
+        zip.start_file("mimetype", options).unwrap();
+        zip.write_all(b"application/epub+zip").unwrap();
+
+        // container.xml
+        zip.start_file("META-INF/container.xml", options).unwrap();
+        zip.write_all(
+            br#"<?xml version="1.0" encoding="UTF-8"?>
+<container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
+  <rootfiles>
+    <rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/>
+  </rootfiles>
+</container>"#,
+        )
+        .unwrap();
+
+        // content.opf with image items in manifest
+        zip.start_file("OEBPS/content.opf", options).unwrap();
+        zip.write_all(
+            br#"<?xml version="1.0" encoding="UTF-8"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="uid">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
+    <dc:title>Image Test Book</dc:title>
+    <dc:identifier id="uid">test-img-001</dc:identifier>
+    <dc:language>en</dc:language>
+  </metadata>
+  <manifest>
+    <item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>
+    <item id="chap01" href="text/chapter01.xhtml" media-type="application/xhtml+xml"/>
+    <item id="img_direct" href="images/direct.png" media-type="image/png"/>
+    <item id="img_cover" href="images/cover.jpg" media-type="image/jpeg"/>
+    <item id="img_unique" href="images/unique_name.png" media-type="image/png"/>
+  </manifest>
+  <spine>
+    <itemref idref="chap01"/>
+  </spine>
+</package>"#,
+        )
+        .unwrap();
+
+        // nav.xhtml
+        zip.start_file("OEBPS/nav.xhtml", options).unwrap();
+        zip.write_all(
+            br#"<?xml version="1.0" encoding="UTF-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops">
+<head><title>Nav</title></head>
+<body>
+  <nav epub:type="toc"><ol><li><a href="text/chapter01.xhtml">Ch 1</a></li></ol></nav>
+</body>
+</html>"#,
+        )
+        .unwrap();
+
+        // chapter01.xhtml
+        zip.start_file("OEBPS/text/chapter01.xhtml", options).unwrap();
+        zip.write_all(
+            br#"<?xml version="1.0" encoding="UTF-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head><title>Chapter 1</title></head>
+<body>
+  <h1>Chapter 1</h1>
+  <p>Text with image:</p>
+  <img src="../images/direct.png" alt="test"/>
+</body>
+</html>"#,
+        )
+        .unwrap();
+
+        // Image files at various paths
+        // Strategy 1: Direct path — "OEBPS/images/direct.png"
+        zip.start_file("OEBPS/images/direct.png", options).unwrap();
+        zip.write_all(fake_png).unwrap();
+
+        // Strategy 2: OPF base + href — "OEBPS/images/cover.jpg"
+        zip.start_file("OEBPS/images/cover.jpg", options).unwrap();
+        zip.write_all(fake_jpg).unwrap();
+
+        // Strategy 4: Unique filename match — "OEBPS/images/unique_name.png"
+        zip.start_file("OEBPS/images/unique_name.png", options).unwrap();
+        zip.write_all(fake_png).unwrap();
+
+        let cursor = zip.finish().unwrap();
+        cursor.into_inner()
+    }
+
+    #[test]
+    fn test_get_resource_strategy1_direct_path() {
+        // Strategy 1: href matches an exact path in the archive
+        let epub_data = create_test_epub_with_images();
+        let mut parser = EpubParser::new(epub_data).unwrap();
+        let data = parser.get_resource("OEBPS/images/direct.png").unwrap();
+        assert_eq!(data, b"FAKE_PNG_DATA_FOR_TESTING");
+    }
+
+    #[test]
+    fn test_get_resource_strategy2_opf_base_prefix() {
+        // Strategy 2: href is relative, prepend OPF base ("OEBPS/")
+        let epub_data = create_test_epub_with_images();
+        let mut parser = EpubParser::new(epub_data).unwrap();
+        let data = parser.get_resource("images/cover.jpg").unwrap();
+        assert_eq!(data, b"FAKE_JPG_DATA_FOR_TESTING");
+    }
+
+    #[test]
+    fn test_get_resource_strategy3_relative_path_normalization() {
+        // Strategy 3: href contains "../" relative path that needs normalization
+        // From chapter at "OEBPS/text/chapter01.xhtml", image src="../images/direct.png"
+        // Normalized: "OEBPS/" + "text/../images/direct.png" -> "OEBPS/images/direct.png"
+        let epub_data = create_test_epub_with_images();
+        let mut parser = EpubParser::new(epub_data).unwrap();
+        // Simulate what the renderer would pass: the raw src from <img> tag
+        // which is relative to the chapter file's directory
+        let data = parser.get_resource("text/../images/direct.png").unwrap();
+        assert_eq!(data, b"FAKE_PNG_DATA_FOR_TESTING");
+    }
+
+    #[test]
+    fn test_get_resource_strategy4_filename_match() {
+        // Strategy 4: Only the filename is provided, matched via manifest
+        let epub_data = create_test_epub_with_images();
+        let mut parser = EpubParser::new(epub_data).unwrap();
+        let data = parser.get_resource("unique_name.png").unwrap();
+        assert_eq!(data, b"FAKE_PNG_DATA_FOR_TESTING");
+    }
+
+    #[test]
+    fn test_get_resource_not_found() {
+        let epub_data = create_test_epub_with_images();
+        let mut parser = EpubParser::new(epub_data).unwrap();
+        let result = parser.get_resource("nonexistent_image.png");
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            ParseError::InvalidEpub(msg) => {
+                assert!(msg.contains("Resource not found"));
+            }
+            other => panic!("Expected InvalidEpub, got: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_get_resource_empty_href() {
+        let epub_data = create_test_epub_with_images();
+        let mut parser = EpubParser::new(epub_data).unwrap();
+        let result = parser.get_resource("");
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            ParseError::InvalidEpub(msg) => {
+                assert!(msg.contains("Empty resource href"));
+            }
+            other => panic!("Expected InvalidEpub, got: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_get_resource_multiple_strategies_fallthrough() {
+        // Verify that when Strategy 1 fails, it falls through to Strategy 2
+        let epub_data = create_test_epub_with_images();
+        let mut parser = EpubParser::new(epub_data).unwrap();
+        // "images/cover.jpg" won't match directly (no "OEBPS/" prefix),
+        // but Strategy 2 prepends "OEBPS/" and finds it
+        let data = parser.get_resource("images/cover.jpg").unwrap();
+        assert_eq!(data, b"FAKE_JPG_DATA_FOR_TESTING");
     }
 }

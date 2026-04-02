@@ -148,6 +148,10 @@ public final class MockReaderEngine: ReaderEngineProtocol, @unchecked Sendable {
         .failure(.notFound)
     }
 
+    public func getResource(href: String) -> Result<Data, ReaderError> {
+        .failure(.notFound)
+    }
+
     public func resolveTocHref(href: String) -> Result<Int, ReaderError> {
         if shouldFail { return .failure(.unknown) }
         // Mock: try to find href in mockSpine

@@ -16,6 +16,9 @@ protocol DomRendererProtocol {
 
 // MARK: - Implementation
 
+/// Closure type for loading image data from an EPUB resource href.
+typealias ImageLoader = (String) -> Data?
+
 /// High-performance DOM-to-NSAttributedString renderer.
 struct DomRenderer: DomRendererProtocol {
 
@@ -24,19 +27,32 @@ struct DomRenderer: DomRendererProtocol {
     let fontName: String
     /// Text color for body text. Defaults to labelColor if not specified.
     let textColor: NSColor
+    /// Optional content width for dynamic image scaling. Falls back to 600 if nil.
+    let contentWidth: CGFloat?
+    /// Optional closure to load image data from EPUB resources.
+    let imageLoader: ImageLoader?
 
     // MARK: - Computed Styles
+
+    /// Default image max width when contentWidth is not specified.
+    private static let defaultMaxImageWidth: CGFloat = 600
+    /// Horizontal padding subtracted from contentWidth for image sizing.
+    private static let imagePadding: CGFloat = 40
 
     init(
         fontSize: Double,
         lineSpacing: Double,
         fontName: String,
-        textColor: NSColor = .labelColor
+        textColor: NSColor = .labelColor,
+        contentWidth: CGFloat? = nil,
+        imageLoader: ImageLoader? = nil
     ) {
         self.fontSize = fontSize
         self.lineSpacing = lineSpacing
         self.fontName = fontName
         self.textColor = textColor
+        self.contentWidth = contentWidth
+        self.imageLoader = imageLoader
     }
 
     private var bodyFont: NSFont {
@@ -177,7 +193,43 @@ struct DomRenderer: DomRendererProtocol {
     // MARK: - Image
 
     private func renderImage(_ node: DomNode) -> NSAttributedString {
-        // Placeholder for images — actual image loading requires EPUB resource extraction
+        // Extract src attribute from the image node
+        let src = node.attributes.first(where: { $0.first == "src" })?.last
+            ?? node.attributes.first(where: { $0.first == "xlink:href" })?.last
+            ?? ""
+
+        // Try to load the actual image data via the imageLoader closure
+        if !src.isEmpty, let loader = imageLoader, let data = loader(src),
+           let image = NSImage(data: data) {
+            let attachment = NSTextAttachment()
+
+            // Scale image to fit within the content width (or default)
+            let maxWidth: CGFloat = contentWidth.map { max($0 - Self.imagePadding, 100) } ?? Self.defaultMaxImageWidth
+            let originalSize = image.size
+            if originalSize.width > maxWidth {
+                let scale = maxWidth / originalSize.width
+                let newSize = NSSize(width: originalSize.width * scale, height: originalSize.height * scale)
+                let resized = NSImage(size: newSize, flipped: false) { drawRect in
+                    NSGraphicsContext.current?.imageInterpolation = .high
+                    image.draw(in: drawRect)
+                    return true
+                }
+                attachment.image = resized
+            } else {
+                attachment.image = image
+            }
+
+            let style = NSMutableParagraphStyle()
+            style.alignment = .center
+            style.paragraphSpacing = fontSize * 0.5
+
+            let result = NSMutableAttributedString(attachment: attachment)
+            result.addAttribute(.paragraphStyle, value: style, range: NSRange(location: 0, length: result.length))
+            result.append(NSAttributedString(string: "\n"))
+            return result
+        }
+
+        // Fallback: show placeholder icon
         let attachment = NSTextAttachment()
         let placeholder = NSImage(systemSymbolName: "photo", accessibilityDescription: "Image")
         attachment.image = placeholder

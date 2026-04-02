@@ -595,6 +595,62 @@ pub unsafe extern "C" fn reader_resolve_toc_href(href_ptr: *const u8, href_len: 
     .unwrap_or(FFI_ERR_PANIC)
 }
 
+/// Get a resource file (image, CSS, font, etc.) from the currently opened EPUB.
+///
+/// The `href` is typically the `src` attribute from an `<img>` tag.
+/// Returns the raw bytes of the resource via `out_ptr`/`out_len`.
+///
+/// # Safety
+/// All pointer parameters must be valid.
+#[no_mangle]
+pub unsafe extern "C" fn reader_get_resource(
+    href_ptr: *const u8,
+    href_len: u32,
+    out_ptr: *mut *const u8,
+    out_len: *mut u32,
+) -> i32 {
+    catch_unwind(|| {
+        let href = match unsafe { ptr_to_str(href_ptr, href_len) } {
+            Ok(s) => s.to_string(),
+            Err(code) => return code,
+        };
+
+        if out_ptr.is_null() || out_len.is_null() {
+            return FFI_ERR_NULL_PTR;
+        }
+
+        let mut guard = match ENGINE.lock() {
+            Ok(g) => g,
+            Err(_) => return FFI_ERR_UNKNOWN,
+        };
+
+        let engine = match guard.as_mut() {
+            Some(e) => e,
+            None => return FFI_ERR_NOT_INIT,
+        };
+
+        let parser = match engine.current_book.as_mut() {
+            Some(p) => p,
+            None => return FFI_ERR_NOT_FOUND,
+        };
+
+        match parser.get_resource(&href) {
+            Ok(data) => {
+                let len = data.len() as u32;
+                engine.binary_buffer = data;
+                let ptr = engine.binary_buffer.as_ptr();
+                unsafe {
+                    *out_ptr = ptr;
+                    *out_len = len;
+                }
+                FFI_OK
+            }
+            Err(_) => FFI_ERR_NOT_FOUND,
+        }
+    })
+    .unwrap_or(FFI_ERR_PANIC)
+}
+
 // ─── TXT Operations ──────────────────────────────────────────────────────────
 
 /// Parse a TXT file from raw bytes with chapter splitting.

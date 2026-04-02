@@ -86,6 +86,9 @@ public protocol ReaderEngineProtocol: Sendable {
     /// Get the cover image data by manifest item id.
     func getCoverImage(coverId: String) -> Result<Data, ReaderError>
 
+    /// Get a resource file (image, CSS, font, etc.) from the currently opened EPUB.
+    func getResource(href: String) -> Result<Data, ReaderError>
+
     /// Resolve a TOC entry href to a spine index.
     /// Returns the 0-based spine index, or .failure(.notFound) if no match.
     func resolveTocHref(href: String) -> Result<Int, ReaderError>

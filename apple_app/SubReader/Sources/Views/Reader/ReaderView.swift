@@ -48,6 +48,7 @@ struct ReaderView: View {
     @State private var chapterLoadRequestID = UUID()
     @State private var bookPaginationRequestID = UUID()
     @State private var preloadRequestID = UUID()
+    @State private var renderRequestID = UUID()
     @State private var toolbarRevealToken = 0
 
     init(bookId: String, engine: any ReaderEngineProtocol) {
@@ -321,23 +322,71 @@ struct ReaderView: View {
                     } else {
                         errorMessage = L("reader.failedLoadChapter")
                     }
+                    isLoading = false
                 }
-                isLoading = false
             }
         }
     }
 
     private func renderContent() {
-        let renderer = DomRenderer(
-            fontSize: preferences.fontSize,
-            lineSpacing: preferences.lineSpacing,
-            fontName: preferences.fontName,
-            textColor: NSColor(theme.textColor)
-        )
-        let rendered = renderer.render(nodes: chapterNodes)
-        attributedContent = rendered
-        if let currentChapterPath {
-            container.chapterCache.set(key: chapterCacheKey(for: currentChapterPath), value: rendered)
+        let requestID = UUID()
+        renderRequestID = requestID
+        isLoading = true
+
+        let engine = appState.engine
+        let pageWidth = currentPageSize.width > 0 ? currentPageSize.width : nil
+        let nodes = chapterNodes
+        let fontSize = preferences.fontSize
+        let lineSpacing = preferences.lineSpacing
+        let fontName = preferences.fontName
+        let textColor = NSColor(theme.textColor)
+        let chapterPath = currentChapterPath
+        let cache = container.chapterCache
+        let cacheKey = chapterPath.map { chapterCacheKey(for: $0) }
+
+        DispatchQueue.global(qos: .userInitiated).async {
+            let renderer = DomRenderer(
+                fontSize: fontSize,
+                lineSpacing: lineSpacing,
+                fontName: fontName,
+                textColor: textColor,
+                contentWidth: pageWidth,
+                imageLoader: { href in
+                    if case .success(let data) = engine.getResource(href: href) {
+                        return data
+                    }
+                    return nil
+                }
+            )
+
+            let rendered: NSAttributedString
+            do {
+                let result = renderer.render(nodes: nodes)
+                // Verify non-empty render result
+                if result.length == 0 && !nodes.isEmpty {
+                    // Fallback: render without images
+                    let fallbackRenderer = DomRenderer(
+                        fontSize: fontSize,
+                        lineSpacing: lineSpacing,
+                        fontName: fontName,
+                        textColor: textColor,
+                        contentWidth: pageWidth,
+                        imageLoader: nil
+                    )
+                    rendered = fallbackRenderer.render(nodes: nodes)
+                } else {
+                    rendered = result
+                }
+            }
+
+            DispatchQueue.main.async {
+                guard requestID == renderRequestID else { return }
+                attributedContent = rendered
+                if let cacheKey {
+                    cache.set(key: cacheKey, value: rendered)
+                }
+                isLoading = false
+            }
         }
     }
 
@@ -400,8 +449,8 @@ struct ReaderView: View {
                     preloadAdjacentChapters()
                 case .failure:
                     errorMessage = L("reader.failedLoadChapterShort")
+                    isLoading = false
                 }
-                isLoading = false
             }
         }
     }
@@ -546,7 +595,14 @@ struct ReaderView: View {
                         fontSize: fontSize,
                         lineSpacing: lineSpacing,
                         fontName: fontName,
-                        textColor: textColor
+                        textColor: textColor,
+                        contentWidth: pageSize.width > 0 ? pageSize.width : nil,
+                        imageLoader: { href in
+                            if case .success(let data) = engine.getResource(href: href) {
+                                return data
+                            }
+                            return nil
+                        }
                     )
                     let newRendered = renderer.render(nodes: nodes)
                     cache.set(key: cacheKey, value: newRendered)
@@ -579,6 +635,7 @@ struct ReaderView: View {
         preloadRequestID = requestID
 
         let originChapterIndex = currentChapterIndex
+        let engine = appState.engine
         let fontSize = preferences.fontSize
         let lineSpacing = preferences.lineSpacing
         let fontName = preferences.fontName
@@ -600,7 +657,7 @@ struct ReaderView: View {
                     return
                 }
 
-                let result = appState.engine.getChapterContent(path: path)
+                let result = engine.getChapterContent(path: path)
 
                 guard isPreloadRequestCurrent(
                     requestID: requestID,
@@ -615,7 +672,14 @@ struct ReaderView: View {
                     fontSize: fontSize,
                     lineSpacing: lineSpacing,
                     fontName: fontName,
-                    textColor: textColor
+                    textColor: textColor,
+                    contentWidth: currentPageSize.width > 0 ? currentPageSize.width : nil,
+                    imageLoader: { href in
+                        if case .success(let data) = engine.getResource(href: href) {
+                            return data
+                        }
+                        return nil
+                    }
                 )
                 let rendered = renderer.render(nodes: nodes)
 
@@ -685,6 +749,7 @@ struct ReaderView: View {
         chapterLoadRequestID = UUID()
         bookPaginationRequestID = UUID()
         preloadRequestID = UUID()
+        renderRequestID = UUID()
     }
 
     // MARK: - Helpers
