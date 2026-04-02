@@ -6,9 +6,15 @@ struct SettingsView: View {
     @ObservedObject private var preferences = ReadingPreferences.shared
     @ObservedObject private var languageManager = LanguageManager.shared
     @Environment(\.colorScheme) private var systemColorScheme
+    @Environment(\.openWindow) private var openWindow
 
     var body: some View {
         TabView {
+            accountTab
+                .tabItem {
+                    Label(L("settings.account"), systemImage: "person.circle")
+                }
+
             readingTab
                 .tabItem {
                     Label(L("settings.reading"), systemImage: "book")
@@ -19,7 +25,36 @@ struct SettingsView: View {
                     Label(L("settings.appearance"), systemImage: "paintbrush")
                 }
         }
-        .frame(width: 450, height: 400)
+        .frame(width: 450, height: 450)
+    }
+
+    // MARK: - Account Tab
+
+    private var accountTab: some View {
+        VStack(spacing: 16) {
+            Image(systemName: "person.circle")
+                .font(.system(size: 40))
+                .foregroundStyle(.secondary)
+
+            Text(L("settings.account"))
+                .font(.headline)
+
+            Text(L("account.dedicatedWindowMessage"))
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: 320)
+
+            Button {
+                openWindow(id: "account")
+            } label: {
+                Label(L("account.openAccountWindow"), systemImage: "arrow.up.forward.app")
+                    .frame(minWidth: 200)
+            }
+            .buttonStyle(.borderedProminent)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding(24)
     }
 
     // MARK: - Reading Tab
