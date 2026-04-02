@@ -334,6 +334,35 @@ impl<P: AuthProvider, S: TokenStore> AuthManager<P, S> {
         tracing::info!("Logged out");
         Ok(())
     }
+
+    /// Change password using the provider.
+    /// Requires a valid access token (auto-obtained via get_valid_token).
+    pub async fn change_password(
+        &self,
+        access_token: &str,
+        old_password: &str,
+        new_password: &str,
+    ) -> Result<(), AuthError> {
+        self.provider
+            .change_password(access_token, old_password, new_password)
+            .await
+    }
+
+    /// List devices using the provider.
+    /// Requires a valid access token.
+    pub async fn list_devices(&self, access_token: &str) -> Result<Vec<DeviceInfo>, AuthError> {
+        self.provider.list_devices(access_token).await
+    }
+
+    /// Remove a device using the provider.
+    /// Requires a valid access token.
+    pub async fn remove_device(
+        &self,
+        access_token: &str,
+        device_id: &str,
+    ) -> Result<(), AuthError> {
+        self.provider.remove_device(access_token, device_id).await
+    }
 }
 
 #[cfg(test)]
