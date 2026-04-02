@@ -6,7 +6,7 @@
 use crate::engine::{SyncEngine, SyncStorage, SyncTransportAdapter};
 use crate::SyncError;
 use std::sync::Arc;
-use tokio::sync::{mpsc, Mutex, Notify};
+use tokio::sync::{mpsc, Mutex};
 
 /// Token provider trait for obtaining the latest valid auth token.
 pub trait TokenProvider: Send + Sync + 'static {
@@ -48,9 +48,8 @@ pub struct SyncScheduler<S: SyncStorage + 'static, T: SyncTransportAdapter + 'st
     engine: Arc<SyncEngine<S, T>>,
     state: Arc<Mutex<SyncState>>,
     command_tx: Option<mpsc::Sender<SchedulerCommand>>,
+    task_handle: Option<tokio::task::JoinHandle<()>>,
     state_callback: Arc<Mutex<Option<StateCallback>>>,
-    /// Notify used to signal the scheduler to wake up.
-    _notify: Arc<Notify>,
 }
 
 impl<S: SyncStorage + 'static, T: SyncTransportAdapter + 'static> SyncScheduler<S, T> {
@@ -60,8 +59,8 @@ impl<S: SyncStorage + 'static, T: SyncTransportAdapter + 'static> SyncScheduler<
             engine: Arc::new(engine),
             state: Arc::new(Mutex::new(SyncState::Dormant)),
             command_tx: None,
+            task_handle: None,
             state_callback: Arc::new(Mutex::new(None)),
-            _notify: Arc::new(Notify::new()),
         }
     }
 
@@ -83,6 +82,11 @@ impl<S: SyncStorage + 'static, T: SyncTransportAdapter + 'static> SyncScheduler<
     /// - Responds to manual sync/push commands
     /// - Fetches the latest auth token before each operation
     pub fn start(&mut self, token_provider: Arc<dyn TokenProvider>) {
+        if self.command_tx.is_some() {
+            tracing::debug!("Sync scheduler already running, ignoring duplicate start");
+            return;
+        }
+
         let (tx, mut rx) = mpsc::channel::<SchedulerCommand>(32);
         self.command_tx = Some(tx);
 
@@ -91,7 +95,7 @@ impl<S: SyncStorage + 'static, T: SyncTransportAdapter + 'static> SyncScheduler<
         let state_callback = Arc::clone(&self.state_callback);
         let sync_mutex = Arc::new(Mutex::new(()));
 
-        tokio::spawn(async move {
+        let handle = tokio::spawn(async move {
             // Set state to idle
             Self::set_state_inner(&state, &state_callback, SyncState::Idle).await;
 
@@ -171,12 +175,20 @@ impl<S: SyncStorage + 'static, T: SyncTransportAdapter + 'static> SyncScheduler<
                 }
             }
         });
+
+        self.task_handle = Some(handle);
     }
 
     /// Stop the scheduler.
-    pub async fn stop(&self) {
-        if let Some(tx) = &self.command_tx {
+    pub async fn stop(&mut self) {
+        if let Some(tx) = self.command_tx.take() {
             let _ = tx.send(SchedulerCommand::Stop).await;
+        }
+
+        if let Some(handle) = self.task_handle.take() {
+            let _ = handle.await;
+        } else {
+            Self::set_state_inner(&self.state, &self.state_callback, SyncState::Dormant).await;
         }
     }
 
